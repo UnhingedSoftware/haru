@@ -1061,6 +1061,7 @@ dependencies = [
  "haru-media",
  "haru-workshop",
  "image",
+ "qrcode",
  "tapline",
  "tapline-ids",
 ]
@@ -1070,7 +1071,9 @@ name = "haru-workshop"
 version = "0.1.0"
 dependencies = [
  "tapline",
+ "tapline-auth",
  "tapline-ids",
+ "tapline-steamworks",
  "tokio",
 ]
 
@@ -2165,6 +2168,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
+
+[[package]]
 name = "quick-xml"
 version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2871,6 +2880,14 @@ version = "0.1.0"
 dependencies = [
  "tapline-ids",
  "tapline-vdf",
+]
+
+[[package]]
+name = "tapline-steamworks"
+version = "0.1.0"
+dependencies = [
+ "libloading",
+ "tapline-ids",
 ]
 
 [[package]]

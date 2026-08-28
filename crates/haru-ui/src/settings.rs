@@ -44,8 +44,11 @@ impl Settings {
         ctx: &egui::Context,
         config: &mut Config,
         backend: Option<&dyn Backend>,
-    ) -> bool {
+        signed_in: bool,
+        client: bool,
+    ) -> (bool, bool) {
         let mut changed = false;
+        let mut sign_in = false;
 
         egui::CentralPanel::default()
             .frame(theme::panel_frame(theme::Side::Middle))
@@ -57,6 +60,31 @@ impl Settings {
                         ui.heading("Settings");
                         ui.add_space(14.0);
 
+                        ui.label(RichText::new("Steam").strong());
+                        ui.add_space(4.0);
+                        match (signed_in, client) {
+                            (true, _) => {
+                                ui.label(RichText::new("Signed in").color(theme::ACCENT));
+                            }
+                            (false, true) => {
+                                ui.label(
+                                    RichText::new("Using the running Steam client")
+                                        .color(theme::ACCENT),
+                                );
+                            }
+                            (false, false) => {
+                                ui.label(
+                                    RichText::new("Not signed in — browsing works, downloading does not")
+                                        .color(theme::MUTED),
+                                );
+                            }
+                        }
+                        ui.add_space(6.0);
+                        if ui.button("Sign in…").clicked() {
+                            sign_in = true;
+                        }
+
+                        ui.add_space(18.0);
                         ui.label(RichText::new("Renderer").strong());
                         ui.add_space(4.0);
                         match backend {
@@ -208,7 +236,7 @@ impl Settings {
                     });
             });
 
-        changed
+        (changed, sign_in)
     }
 }
 

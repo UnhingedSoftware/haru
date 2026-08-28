@@ -80,6 +80,8 @@ pub struct Library {
     settings_for: Option<PathBuf>,
     /// The connection unsubscribing goes over, shared with the browser.
     workshop: std::rc::Rc<Workshop>,
+    /// The unsubscribe in flight, so its failure lands here and not elsewhere.
+    unsubscribing: Option<haru_workshop::RequestId>,
 }
 
 impl Library {
@@ -88,12 +90,15 @@ impl Library {
     /// Only unsubscribes are sent from here, so anything else belongs to the
     /// browser and is left for it.
     fn collect(&mut self) {
-        while let Some((_, reply)) = self.workshop.poll() {
-            match reply {
-                Reply::Unsubscribed => self.status = "unsubscribed".to_owned(),
-                Reply::Failed(why) => self.status = why,
-                _ => {}
-            }
+        if let Some(id) = self.unsubscribing
+            && let Some(reply) = self.workshop.take(id)
+        {
+            self.unsubscribing = None;
+            self.status = match reply {
+                Reply::Unsubscribed => "unsubscribed".to_owned(),
+                Reply::Failed(why) => why,
+                _ => return,
+            };
         }
     }
 }
@@ -114,6 +119,7 @@ impl Library {
             settings: Vec::new(),
             settings_for: None,
             workshop,
+            unsubscribing: None,
         }
     }
 
@@ -155,6 +161,13 @@ impl Library {
         backend: Option<&dyn Backend>,
         sidebar: bool,
     ) {
+        // Whatever the connection has answered since the last frame — an
+        // unsubscribe is sent from here, and its outcome belongs in the bar.
+        self.collect();
+        if self.unsubscribing.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(120));
+        }
+
         if sidebar {
             egui::SidePanel::left("screens")
                 .resizable(false)
@@ -378,47 +391,18 @@ impl Library {
             .map_or_else(|| "Current wallpaper".to_owned(), |item| item.title.clone());
         let live = Some(&dir) == on_screen.as_ref();
 
-        // Settings belong to a wallpaper the renderer has loaded. For anything
-        // else there is nothing to change, so the panel says what the wallpaper
-        // *is* and offers to put it up — which is the step that makes its
-        // settings appear.
+        // Reached only with nothing selected, which means this *is* the
+        // wallpaper on the screen. A wallpaper being looked at rather than
+        // shown is the pane's business, not the sidebar's.
         if !live {
             ui.label(RichText::new("Wallpaper").small().color(theme::MUTED));
             ui.add(egui::Label::new(RichText::new(&title).size(13.0)).truncate());
-            ui.add_space(6.0);
-
-            if let Some(item) = item.as_ref() {
-                ui.label(
-                    RichText::new(format!("{} · {}", item.kind, human_size(item.size)))
-                        .small()
-                        .color(theme::MUTED),
-                );
-                ui.label(RichText::new(&item.id).small().color(theme::MUTED));
-                ui.add_space(8.0);
-
-                let target = self.target.clone();
-                let can_apply = target.is_some() && backend.is_some();
-                let label = target
-                    .as_deref()
-                    .map_or_else(|| "Apply".to_owned(), |screen| format!("Apply to {screen}"));
-                if ui
-                    .add_enabled(
-                        can_apply,
-                        egui::Button::new(label).min_size(egui::vec2(ui.available_width(), 28.0)),
-                    )
-                    .clicked()
-                    && let Some(screen) = target
-                {
-                    let dir = item.dir.clone();
-                    self.apply(&screen, &dir, backend);
-                }
-                ui.add_space(4.0);
-                ui.label(
-                    RichText::new("Its settings appear here once it is on a screen.")
-                        .small()
-                        .color(theme::MUTED),
-                );
-            }
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new("Its settings appear once it is on a screen.")
+                    .small()
+                    .color(theme::MUTED),
+            );
             return;
         }
 
@@ -614,43 +598,38 @@ impl Library {
                 ui.label(format!("{} · {}", item.kind, human_size(item.size)));
                 ui.label(RichText::new(&item.id).small().color(theme::MUTED));
 
-                ui.add_space(10.0);
-                let target = self.target.clone();
-                ui.add_enabled_ui(target.is_some() && backend.is_some(), |ui| {
-                    let label = target
-                        .as_deref()
-                        .map_or_else(|| "Apply".to_owned(), |screen| format!("Apply to {screen}"));
-                    if ui
-                        .add_sized([ui.available_width(), 32.0], egui::Button::new(label))
-                        .clicked()
-                        && let Some(screen) = target
-                    {
-                        self.apply(&screen, &item.dir, backend);
-                    }
-                });
+                ui.add_space(12.0);
 
-                ui.add_space(10.0);
-
+                // No Apply button: clicking the wallpaper in the grid is what
+                // applies it, and a second way to do the same thing is a
+                // button asking to be pressed for no reason.
                 if self.confirming.as_deref() == Some(item.id.as_str()) {
                     ui.label(
                         RichText::new("Remove it and tell Steam you no longer want it?")
                             .small()
                             .color(theme::MUTED),
                     );
+                    ui.add_space(6.0);
+                    if ui
+                        .add_sized(
+                            [ui.available_width(), 32.0],
+                            egui::Button::new(RichText::new("Unsubscribe").color(theme::TEXT))
+                                .fill(theme::DANGER.gamma_multiply(0.7)),
+                        )
+                        .clicked()
+                    {
+                        self.unsubscribe(&item);
+                    }
                     ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        if ui
-                            .add(egui::Button::new("Unsubscribe").fill(theme::DANGER))
-                            .clicked()
-                        {
-                            self.unsubscribe(&item);
-                        }
-                        if ui.button("Keep").clicked() {
-                            self.confirming = None;
-                        }
-                    });
+                    if ui
+                        .add_sized([ui.available_width(), 26.0], egui::Button::new("Keep"))
+                        .clicked()
+                    {
+                        self.confirming = None;
+                    }
                 } else if ui
-                    .add(
+                    .add_sized(
+                        [ui.available_width(), 32.0],
                         egui::Button::new(RichText::new("Unsubscribe").color(theme::DANGER))
                             .stroke(egui::Stroke::new(1.0_f32, theme::DANGER)),
                     )
@@ -676,10 +655,10 @@ impl Library {
         self.confirming = None;
 
         if let Ok(id) = item.id.parse::<u64>() {
-            self.workshop.send(Request::Unsubscribe {
+            self.unsubscribing = Some(self.workshop.send(Request::Unsubscribe {
                 app: haru_core::WALLPAPER_ENGINE,
                 item: tapline_ids::PublishedFileId(id),
-            });
+            }));
         }
 
         self.status = match std::fs::remove_dir_all(&item.dir) {

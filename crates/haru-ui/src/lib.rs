@@ -9,6 +9,7 @@
 //! round trip to a CM — and a page of results asks the cache for its pictures
 //! every frame, because the grid does not know what it already has.
 
+mod account;
 mod app;
 mod library;
 mod preview;
@@ -17,6 +18,7 @@ pub mod theme;
 mod tile;
 mod widgets;
 
+pub use account::Account;
 pub use app::{Haru, Tab};
 pub use library::Library;
 pub use preview::Preview;
@@ -66,8 +68,15 @@ pub struct Browser {
     selected: Option<usize>,
     /// Where a download lands, from the settings.
     install_root: Option<PathBuf>,
+    /// Whether a running Steam client can be asked to subscribe.
+    ///
+    /// The better route when it exists: Steam holds the depot key, so no login
+    /// here, and it downloads into the library this already reads.
+    client: bool,
     /// The download in flight, if any: its item, and how far it has got.
     downloading: Option<(u64, u64, u64)>,
+    /// The request the download's answers will carry.
+    fetching: Option<RequestId>,
     /// Items installed during this session, so a tile stops offering to fetch
     /// what is already on disk.
     installed: Vec<u64>,
@@ -115,7 +124,9 @@ impl Browser {
             status: Status::Searching,
             selected: None,
             install_root: None,
+            client: false,
             downloading: None,
+            fetching: None,
             installed: Vec::new(),
             landed: None,
         }
@@ -134,9 +145,20 @@ impl Browser {
         self.install_root = root;
     }
 
+    /// Tells the browser whether a Steam client can do the fetching.
+    pub fn set_client(&mut self, client: bool) {
+        self.client = client;
+    }
+
     /// Draws a frame.
     pub fn ui(&mut self, ctx: &egui::Context, previews: &mut Previews, sidebar: bool) {
         self.collect();
+
+        // Same reason as the account state: a reply is not an event, so a
+        // window with nothing else happening would sleep on it.
+        if self.awaiting.is_some() || self.fetching.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(120));
+        }
 
         if sidebar {
             egui::SidePanel::left("filters")
@@ -162,19 +184,20 @@ impl Browser {
             .show(ctx, |ui| self.grid(ui, previews));
     }
 
-    /// Takes any answer that has arrived.
+    /// Takes the answers that belong to this view.
+    ///
+    /// Claimed by the request that asked, because the connection is shared and
+    /// an answer's shape does not say whose it is.
     fn collect(&mut self) {
-        while let Some((id, reply)) = self.workshop.poll() {
-            // An answer to a search that has already been replaced.
-            if Some(id) != self.awaiting {
-                continue;
-            }
+        if let Some(id) = self.awaiting
+            && let Some(reply) = self.workshop.take(id)
+        {
             self.awaiting = None;
             match reply {
                 Reply::Page(page) => {
                     self.selected = None;
                     // Endless scrolling keeps what came before; paging
-                    // replaces it, which is the whole difference between them.
+                    // replaces it, which is the whole difference.
                     if self.infinite && self.filters.page > 1 {
                         if let Some(previous) = self.page.take() {
                             self.appended.extend(previous.items);
@@ -186,30 +209,56 @@ impl Browser {
                     self.status = Status::Idle;
                 }
                 Reply::Count(_) => self.status = Status::Idle,
-                Reply::Progress { id, done, total } => {
-                    self.downloading = Some((id, done, total));
+                Reply::Failed(why) => self.status = Status::Failed(why),
+                _ => {}
+            }
+        }
+
+        // A download answers repeatedly — progress, then the outcome — so it
+        // keeps its request until one of the endings arrives.
+        while let Some(id) = self.fetching
+            && let Some(reply) = self.workshop.take(id)
+        {
+            match reply {
+                Reply::Progress {
+                    id: item,
+                    done,
+                    total,
+                } => {
+                    self.downloading = Some((item, done, total));
                 }
-                Reply::Installed { id, dir } => {
+                Reply::Installed { id: item, dir } => {
+                    self.fetching = None;
                     self.downloading = None;
-                    self.installed.push(id);
+                    self.installed.push(item);
                     self.status = Status::Idle;
-                    // Straight onto a screen: downloading a wallpaper you were
-                    // looking at is asking for it, and a second click to see it
-                    // is a step nobody wants.
+                    // Straight onto a screen: asking for it was the decision,
+                    // and a second trip to see it is a step nobody wants.
                     self.landed = Some(dir);
                 }
+                Reply::Subscribed => {
+                    // Steam fetches it from here, into its own library — which
+                    // is the one the Library tab rescans.
+                    self.fetching = None;
+                    self.downloading = None;
+                    self.status = Status::Idle;
+                }
                 Reply::Failed(why) => {
+                    self.fetching = None;
                     self.downloading = None;
                     self.status = Status::Failed(why);
                 }
-                // Sent from the library, over the same connection.
-                Reply::Unsubscribed => {}
+                _ => {}
             }
         }
     }
 
     /// Runs the current filters, from the first page.
     fn search(&mut self) {
+        // The old search's answer is nobody's now.
+        if let Some(id) = self.awaiting.take() {
+            self.workshop.discard(id);
+        }
         self.filters.page = 1;
         self.appended.clear();
         self.page = None;
@@ -541,19 +590,31 @@ impl Browser {
                             .add_sized([ui.available_width(), 30.0], egui::Button::new("Download"))
                             .clicked()
                         {
-                            match self.install_root.clone() {
-                                Some(root) => {
-                                    self.downloading = Some((id, 0, found.item.size));
-                                    self.workshop.send(Request::Install {
-                                        item: Box::new(found.item.clone()),
-                                        into: root,
-                                    });
-                                }
-                                None => {
-                                    self.status = Status::Failed(
-                                        "no Steam library to install into — set one in Settings"
-                                            .to_owned(),
-                                    );
+                            // A running client is the better route: it holds
+                            // the depot key, so nothing here needs a login, and
+                            // it downloads into the library this already reads.
+                            if self.client {
+                                self.downloading = Some((id, 0, found.item.size));
+                                self.fetching =
+                                    Some(self.workshop.send(Request::SubscribeViaClient {
+                                        item: found.item.id,
+                                    }));
+                            } else {
+                                match self.install_root.clone() {
+                                    Some(root) => {
+                                        self.downloading = Some((id, 0, found.item.size));
+                                        self.fetching =
+                                            Some(self.workshop.send(Request::Install {
+                                                item: Box::new(found.item.clone()),
+                                                into: root,
+                                            }));
+                                    }
+                                    None => {
+                                        self.status = Status::Failed(
+                                            "no Steam library to install into — set one in Settings"
+                                                .to_owned(),
+                                        );
+                                    }
                                 }
                             }
                         }

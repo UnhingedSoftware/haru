@@ -45,6 +45,15 @@ pub enum Request {
     Browse(BrowseQuery),
     /// Count what a query matches, without fetching any of it.
     Count(BrowseQuery),
+    /// Report who is signed in, and whether a Steam client is reachable.
+    WhoAmI,
+    /// Sign in by QR code, and save the token for next time.
+    SignIn,
+    /// Subscribe through a running Steam client, which needs no login here.
+    SubscribeViaClient {
+        /// Which item.
+        item: tapline_ids::PublishedFileId,
+    },
     /// Tell Steam this account no longer wants an item.
     Unsubscribe {
         /// Which app's Workshop.
@@ -77,6 +86,23 @@ pub enum Reply {
         /// Bytes expected, when the plan knows.
         total: u64,
     },
+    /// What routes to Steam exist on this machine.
+    Account {
+        /// Whether a saved login exists.
+        saved: bool,
+        /// Whether a running Steam client can be reached.
+        client: bool,
+    },
+    /// A QR code to scan, as a URL. Sent again whenever Steam rotates it.
+    ///
+    /// Rotation is the part that is easy to miss: a code expires mid-login and
+    /// Steam hands back a new one, so a window that drew only the first would
+    /// show an unscannable square and wait forever.
+    QrCode(String),
+    /// Signed in, as this account.
+    SignedIn(String),
+    /// A running Steam client was told to subscribe; it downloads from here.
+    Subscribed,
     /// Steam has been told the account no longer wants an item.
     Unsubscribed,
     /// An item is on disk, at this directory.
@@ -97,13 +123,21 @@ pub enum Reply {
 /// every filter click — and answers arrive in whatever order Steam manages.
 /// Without this, a slow first search overwrites the fast second one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct RequestId(u64);
+pub struct RequestId(pub u64);
 
 /// A live connection to the Workshop, driven from a UI thread.
 pub struct Workshop {
     outbound: Sender<(RequestId, Request)>,
     inbound: Receiver<(RequestId, Reply)>,
     next: std::cell::Cell<u64>,
+    /// Answers that have arrived and not yet been claimed.
+    ///
+    /// More than one view shares this connection, so an answer is claimed by
+    /// the request that asked for it rather than by whoever polls first. An
+    /// earlier version had views hand back what was not theirs, which
+    /// deadlocked the moment nobody wanted something: the unclaimed reply was
+    /// served again on the next poll, ahead of everything behind it, for ever.
+    waiting: std::cell::RefCell<Vec<(RequestId, Reply)>>,
 }
 
 impl Workshop {
@@ -128,6 +162,7 @@ impl Workshop {
             outbound,
             inbound,
             next: std::cell::Cell::new(1),
+            waiting: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -141,13 +176,130 @@ impl Workshop {
         id
     }
 
-    /// Takes one answer, if any has arrived. Never blocks.
+    /// Takes the answer to one request, if it has arrived. Never blocks.
     ///
-    /// A disconnected worker reads the same as an empty queue on purpose: the
-    /// UI's response to both is to keep drawing, and a dead worker has already
-    /// shown itself through whatever request never came back.
-    pub fn poll(&self) -> Option<(RequestId, Reply)> {
-        self.inbound.try_recv().ok()
+    /// Answers to anything else are left where they are for whoever asked.
+    pub fn take(&self, wanted: RequestId) -> Option<Reply> {
+        self.drain();
+        let mut waiting = self.waiting.try_borrow_mut().ok()?;
+        let at = waiting.iter().position(|(id, _)| *id == wanted)?;
+        Some(waiting.remove(at).1)
+    }
+
+    /// Forgets any answers to a request nobody is waiting for any more.
+    ///
+    /// A search replaced by a newer one, say. Without this its reply would sit
+    /// in the buffer until the process ended.
+    pub fn discard(&self, unwanted: RequestId) {
+        self.drain();
+        if let Ok(mut waiting) = self.waiting.try_borrow_mut() {
+            waiting.retain(|(id, _)| *id != unwanted);
+        }
+    }
+
+    /// Moves whatever has arrived into the buffer.
+    ///
+    /// Bounded: an answer nobody ever claims — a view closed before its reply
+    /// landed — would otherwise accumulate for the life of the process.
+    fn drain(&self) {
+        /// How many unclaimed answers to keep before dropping the oldest.
+        const KEEP: usize = 64;
+
+        let Ok(mut waiting) = self.waiting.try_borrow_mut() else {
+            return;
+        };
+        while let Ok(answer) = self.inbound.try_recv() {
+            waiting.push(answer);
+        }
+        if waiting.len() > KEEP {
+            let excess = waiting.len() - KEEP;
+            waiting.drain(..excess);
+        }
+    }
+}
+
+/// How long to wait on a client that is thinking about it.
+const CLIENT_PATIENCE: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// How long to wait for a Steam client to say whether it is there.
+///
+/// Not optional. Measured on this machine: `SteamAPI_Init` loads
+/// `steamclient.so`, logs `[API loaded no]`, and sometimes never returns —
+/// 45 seconds and counting, against a Steam that was plainly running. A window
+/// cannot wait on that, so the answer after this long is "no client".
+const CLIENT_PROBE: std::time::Duration = std::time::Duration::from_secs(4);
+
+/// Whether a login has been saved on this machine.
+///
+/// The file's existence, not its contents: reading it would mean knowing which
+/// account to ask for, and the question here is only whether signing in has
+/// already happened.
+fn saved_login() -> bool {
+    match tapline_auth::TokenStore::default_file() {
+        tapline_auth::TokenStore::File { path } => {
+            std::fs::metadata(path).is_ok_and(|file| file.len() > 0)
+        }
+        _ => false,
+    }
+}
+
+/// Whether a running Steam client can be reached, without hanging on it.
+///
+/// The connect happens on its own thread and is given a deadline. A thread
+/// left behind by an init that never returns is one thread, once, for the life
+/// of the process — the alternative is a window that never answers because a
+/// game client is thinking.
+fn client_available() -> bool {
+    let (answer, heard) = channel();
+    std::thread::Builder::new()
+        .name("haru-steam-probe".to_owned())
+        .spawn(move || {
+            let reachable = tapline_steamworks::Steam::connect(WALLPAPER_ENGINE).is_ok();
+            let _ = answer.send(reachable);
+        })
+        .ok();
+    heard.recv_timeout(CLIENT_PROBE).unwrap_or(false)
+}
+
+/// The running Steam client, for work that needs one.
+///
+/// Allowed to block, unlike [`client_available`]: it runs when something has
+/// already been asked of the client, where waiting is the expected cost.
+fn client() -> Option<tapline_steamworks::Steam> {
+    tapline_steamworks::Steam::connect(WALLPAPER_ENGINE).ok()
+}
+
+/// Signs in by QR code, reporting each code as it is issued.
+///
+/// tapline owns the loop and the refresh; this forwards the codes to whatever
+/// is drawing them and saves the token at the end, so the next run signs in by
+/// itself.
+async fn sign_in(
+    session: &mut Session,
+    replies: &Sender<(RequestId, Reply)>,
+    id: RequestId,
+) -> Reply {
+    /// Long enough to find a phone, short enough not to hang for ever.
+    const PATIENCE: std::time::Duration = std::time::Duration::from_secs(180);
+
+    let outbound = replies.clone();
+    let mut on_code = move |url: &str| {
+        let _ = outbound.send((id, Reply::QrCode(url.to_owned())));
+    };
+
+    match session.qr_login(PATIENCE, &mut on_code).await {
+        Ok(token) => {
+            let account = token.account.clone();
+            match tapline_auth::TokenStore::default_file().save(&token) {
+                Ok(()) => Reply::SignedIn(account),
+                // Signed in but not saved: this session works, the next one
+                // asks again, and saying so beats a silent re-prompt later.
+                Err(error) => Reply::Failed(format!(
+                    "signed in, but the token could not be saved ({error})"
+                )),
+            }
+        }
+        Err(error) => Reply::Failed(error.to_string()),
     }
 }
 
@@ -172,8 +324,8 @@ async fn install(
 
     // Progress goes out as it happens rather than being collected: a 90 MB
     // wallpaper is thirty seconds of nothing otherwise. tapline emits one of
-    // these per chunk written, which is far more often than a window needs, so
-    // only a change worth drawing is forwarded.
+    // these per chunk written, far more often than a window needs, so only a
+    // change worth drawing is forwarded.
     let item_id = item.id.get();
     let outbound = replies.clone();
     let mut last_sent = 0_u64;
@@ -208,7 +360,7 @@ async fn install(
         // The one failure worth saying plainly: Wallpaper Engine's depot is
         // not anonymously accessible, and the fix is one command.
         Err(error) if error.needs_login() => Reply::Failed(
-            "this needs a Steam account that owns Wallpaper Engine — run `tapline login --qr` once"
+            "this needs a Steam account that owns Wallpaper Engine — sign in, or open Steam"
                 .to_owned(),
         ),
         Err(error) => Reply::Failed(error.to_string()),
@@ -236,6 +388,21 @@ fn worker(requests: &Receiver<(RequestId, Request)>, replies: &Sender<(RequestId
     let mut session: Option<Session> = None;
 
     while let Ok((id, request)) = requests.recv() {
+        // A file and a process check — no connection involved. Answering this
+        // through the session made the window wait on a CM handshake to find
+        // out whether a token file exists, and a slow one left the account
+        // state unresolved for as long as it took.
+        if matches!(request, Request::WhoAmI) {
+            let reply = Reply::Account {
+                saved: saved_login(),
+                client: client_available(),
+            };
+            if replies.send((id, reply)).is_err() {
+                return;
+            }
+            continue;
+        }
+
         let reply = runtime.block_on(async {
             // Opened on first use and kept: the connection costs about a
             // second, which is most of what a search costs.
@@ -261,6 +428,18 @@ fn worker(requests: &Receiver<(RequestId, Request)>, replies: &Sender<(RequestId
                 Request::Install { item, into } => {
                     install(session, &item, &into, replies, id).await
                 }
+                // Answered before the session; see above.
+                Request::WhoAmI => Reply::Failed("unreachable".to_owned()),
+                Request::SignIn => sign_in(session, replies, id).await,
+                Request::SubscribeViaClient { item } => match client() {
+                    // Steam downloads it into its own library, which is where
+                    // this looks anyway — no depot key, no login here.
+                    Some(steam) => match steam.subscribe(item, CLIENT_PATIENCE) {
+                        Ok(()) => Reply::Subscribed,
+                        Err(error) => Reply::Failed(error.to_string()),
+                    },
+                    None => Reply::Failed("no running Steam client to ask".to_owned()),
+                },
                 Request::Unsubscribe { app, item } => {
                     match session.unsubscribe_workshop_item(app, item).await {
                         Ok(()) => Reply::Unsubscribed,
@@ -299,8 +478,43 @@ mod tests {
     }
 
     #[test]
-    fn polling_an_idle_workshop_does_not_block() {
+    fn an_idle_workshop_answers_nothing_and_does_not_block() {
         let workshop = Workshop::spawn();
-        assert!(workshop.poll().is_none());
+        assert!(workshop.take(RequestId(1)).is_none());
+    }
+
+    #[test]
+    fn an_unclaimed_answer_does_not_block_the_ones_behind_it() {
+        // The failure this replaced: a view handed back a reply that was not
+        // its own, the next poll served the same one first, and every answer
+        // behind it waited for ever.
+        let workshop = Workshop::spawn();
+        if let Ok(mut waiting) = workshop.waiting.try_borrow_mut() {
+            waiting.push((RequestId(1), Reply::Unsubscribed));
+            waiting.push((RequestId(2), Reply::Subscribed));
+        }
+        assert!(
+            matches!(workshop.take(RequestId(2)), Some(Reply::Subscribed)),
+            "an answer must be reachable past an unclaimed one"
+        );
+        assert!(matches!(
+            workshop.take(RequestId(1)),
+            Some(Reply::Unsubscribed)
+        ));
+    }
+
+    #[test]
+    fn unclaimed_answers_do_not_pile_up_for_ever() {
+        let workshop = Workshop::spawn();
+        if let Ok(mut waiting) = workshop.waiting.try_borrow_mut() {
+            for id in 0..200 {
+                waiting.push((RequestId(id), Reply::Unsubscribed));
+            }
+        }
+        workshop.drain();
+        assert!(
+            workshop.waiting.borrow().len() <= 64,
+            "the buffer must be bounded"
+        );
     }
 }

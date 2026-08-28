@@ -13,7 +13,9 @@ use haru_media::Previews;
 use haru_workshop::Workshop;
 use std::rc::Rc;
 
-use crate::{Browser, Library, Preview, Settings, theme};
+use haru_workshop::{Reply, Request};
+
+use crate::{Account, Browser, Library, Preview, Settings, theme};
 
 /// Which view is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +74,16 @@ pub struct Haru {
     backend: Option<Box<dyn Backend>>,
     /// Whether the library has been scanned since it was last invalidated.
     scanned: bool,
+    /// The sign-in overlay, and what it knows.
+    account: Account,
+    /// The connection everything Steam-shaped goes over.
+    workshop: Rc<Workshop>,
+    /// The request that asks who is signed in, while it is outstanding.
+    who_request: Option<haru_workshop::RequestId>,
+    /// The sign-in in flight, so its answers come here and not elsewhere.
+    sign_in_request: Option<haru_workshop::RequestId>,
+    /// Whether the account has been asked about yet.
+    asked_who: bool,
     /// Whether the left panel is showing.
     ///
     /// One switch for both views: it is the same edge of the same window, and
@@ -140,13 +152,18 @@ impl Haru {
             tab,
             previews: Previews::new(),
             browser,
-            library: Library::new(workshop),
+            library: Library::new(Rc::clone(&workshop)),
             preview,
             settings,
             config,
             backend,
             scanned: false,
             sidebar: true,
+            account: Account::new(),
+            workshop,
+            asked_who: false,
+            who_request: None,
+            sign_in_request: None,
         }
     }
 
@@ -157,6 +174,22 @@ impl Haru {
         if !self.scanned {
             self.library.refresh(&self.config, self.backend.as_deref());
             self.scanned = true;
+        }
+
+        // Asked once, on the first frame: the answer decides whether the
+        // overlay has anything to interrupt for.
+        if !self.asked_who {
+            self.who_request = Some(self.workshop.send(Request::WhoAmI));
+            self.asked_who = true;
+        }
+        self.collect_account();
+
+        // egui draws on events, and an answer arriving on a channel is not
+        // one. Without this the window sleeps with a reply sitting unread —
+        // which is exactly what happened on a static tab: the account state
+        // was answered in milliseconds and collected never.
+        if self.who_request.is_some() || self.sign_in_request.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(120));
         }
 
         self.tabs(ctx);
@@ -190,10 +223,17 @@ impl Haru {
             }
             Tab::Preview => self.preview.ui(ctx, self.sidebar),
             Tab::Settings => {
-                if self
-                    .settings
-                    .ui(ctx, &mut self.config, self.backend.as_deref())
-                {
+                let (changed, sign_in) = self.settings.ui(
+                    ctx,
+                    &mut self.config,
+                    self.backend.as_deref(),
+                    self.account.is_signed_in(),
+                    self.account.has_client(),
+                );
+                if sign_in {
+                    self.account.open();
+                }
+                if changed {
                     // A changed socket means a different renderer, and a
                     // changed library means a different set of wallpapers.
                     self.backend = haru_apply::detect(self.config.socket.clone());
@@ -209,7 +249,52 @@ impl Haru {
         }
 
         // Everything the frame did not draw is dropped here.
+        // Last, so it sits over whatever was drawn.
+        if self.account.ui(ctx) {
+            self.sign_in_request = Some(self.workshop.send(Request::SignIn));
+        }
+
         self.finish_frame();
+    }
+
+    /// Takes the connection's answers about the account.
+    ///
+    /// Everything else on that channel belongs to the tab that asked for it,
+    /// and is left alone.
+    fn collect_account(&mut self) {
+        if let Some(id) = self.who_request
+            && let Some(reply) = self.workshop.take(id)
+        {
+            self.who_request = None;
+            match reply {
+                Reply::Account { saved, client } => {
+                    self.browser.set_client(client);
+                    self.account.observed(saved, client);
+                }
+                // Nothing to sign in with and no client to ask is exactly the
+                // state worth interrupting for.
+                _ => self.account.observed(false, false),
+            }
+        }
+
+        // A sign-in answers more than once: Steam rotates the code, so each
+        // one arrives under the same request until the login resolves.
+        while let Some(id) = self.sign_in_request
+            && let Some(reply) = self.workshop.take(id)
+        {
+            match reply {
+                Reply::QrCode(url) => self.account.show_code(url),
+                Reply::SignedIn(who) => {
+                    self.sign_in_request = None;
+                    self.account.signed_in(who);
+                }
+                Reply::Failed(why) => {
+                    self.sign_in_request = None;
+                    self.account.failed(why);
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Ends the frame.
