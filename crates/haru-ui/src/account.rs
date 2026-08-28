@@ -86,6 +86,16 @@ impl Account {
         self.open = false;
     }
 
+    /// Records that the saved login is gone.
+    pub fn signed_out(&mut self) {
+        self.signed_in = false;
+        self.code = None;
+        self.waiting = false;
+        self.status.clear();
+        // Only worth asking again if there is now no way to download at all.
+        self.open = !self.client;
+    }
+
     /// Records why signing in did not happen.
     pub fn failed(&mut self, why: String) {
         self.waiting = false;

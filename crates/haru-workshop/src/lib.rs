@@ -47,6 +47,8 @@ pub enum Request {
     WhoAmI,
     /// Sign in by QR code, and save the token for next time.
     SignIn,
+    /// Forget the saved login and drop the connection using it.
+    SignOut,
     /// Subscribe through a running Steam client, which needs no login here.
     SubscribeViaClient {
         /// Which item.
@@ -99,6 +101,8 @@ pub enum Reply {
     QrCode(String),
     /// Signed in, as this account.
     SignedIn(String),
+    /// The saved login is gone.
+    SignedOut,
     /// A running Steam client was told to subscribe; it downloads from here.
     Subscribed,
     /// Steam has been told the account no longer wants an item.
@@ -401,6 +405,23 @@ fn worker(requests: &Receiver<(RequestId, Request)>, replies: &Sender<(RequestId
             continue;
         }
 
+        // Forgetting a login is a file, and dropping the connection that used
+        // it is the other half — without that, this process would keep working
+        // as the account it was just told to forget.
+        if matches!(request, Request::SignOut) {
+            let reply = match tapline_auth::TokenStore::default_file().forget_all() {
+                Ok(()) => {
+                    session = None;
+                    Reply::SignedOut
+                }
+                Err(error) => Reply::Failed(error.to_string()),
+            };
+            if replies.send((id, reply)).is_err() {
+                return;
+            }
+            continue;
+        }
+
         let reply = runtime.block_on(async {
             // Opened on first use and kept: the connection costs about a
             // second, which is most of what a search costs.
@@ -426,8 +447,10 @@ fn worker(requests: &Receiver<(RequestId, Request)>, replies: &Sender<(RequestId
                 Request::Install { item, into } => {
                     install(session, &item, &into, replies, id).await
                 }
-                // Answered before the session; see above.
-                Request::WhoAmI => Reply::Failed("unreachable".to_owned()),
+                // Both are answered before the session; see above.
+                Request::WhoAmI | Request::SignOut => {
+                    Reply::Failed("handled before the session".to_owned())
+                }
                 Request::SignIn => sign_in(session, replies, id).await,
                 Request::SubscribeViaClient { item } => match client() {
                     // Steam downloads it into its own library, which is where

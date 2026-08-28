@@ -46,9 +46,10 @@ impl Settings {
         backend: Option<&dyn Backend>,
         signed_in: bool,
         client: bool,
-    ) -> (bool, bool) {
+    ) -> (bool, bool, bool) {
         let mut changed = false;
         let mut sign_in = false;
+        let mut sign_out = false;
 
         egui::CentralPanel::default()
             .frame(theme::panel_frame(theme::Side::Middle))
@@ -80,9 +81,21 @@ impl Settings {
                             }
                         }
                         ui.add_space(6.0);
-                        if ui.button("Sign in…").clicked() {
-                            sign_in = true;
-                        }
+                        ui.horizontal(|ui| {
+                            if ui.button(if signed_in { "Sign in again…" } else { "Sign in…" }).clicked() {
+                                sign_in = true;
+                            }
+                            // Only offered when there is something to forget.
+                            // tapline keeps the login; this asks it to stop.
+                            if signed_in
+                                && ui
+                                    .button(RichText::new("Disconnect").color(theme::DANGER))
+                                    .on_hover_text("Forgets the saved login on this machine")
+                                    .clicked()
+                            {
+                                sign_out = true;
+                            }
+                        });
 
                         ui.add_space(18.0);
                         ui.label(RichText::new("Renderer").strong());
@@ -236,7 +249,7 @@ impl Settings {
                     });
             });
 
-        (changed, sign_in)
+        (changed, sign_in, sign_out)
     }
 }
 

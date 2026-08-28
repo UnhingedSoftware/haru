@@ -82,6 +82,8 @@ pub struct Haru {
     who_request: Option<haru_workshop::RequestId>,
     /// The sign-in in flight, so its answers come here and not elsewhere.
     sign_in_request: Option<haru_workshop::RequestId>,
+    /// The sign-out in flight.
+    sign_out_request: Option<haru_workshop::RequestId>,
     /// Whether the account has been asked about yet.
     asked_who: bool,
     /// Whether the left panel is showing.
@@ -164,6 +166,7 @@ impl Haru {
             asked_who: false,
             who_request: None,
             sign_in_request: None,
+            sign_out_request: None,
         }
     }
 
@@ -188,7 +191,10 @@ impl Haru {
         // one. Without this the window sleeps with a reply sitting unread —
         // which is exactly what happened on a static tab: the account state
         // was answered in milliseconds and collected never.
-        if self.who_request.is_some() || self.sign_in_request.is_some() {
+        if self.who_request.is_some()
+            || self.sign_in_request.is_some()
+            || self.sign_out_request.is_some()
+        {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
         }
 
@@ -223,7 +229,7 @@ impl Haru {
             }
             Tab::Preview => self.preview.ui(ctx, self.sidebar),
             Tab::Settings => {
-                let (changed, sign_in) = self.settings.ui(
+                let (changed, sign_in, sign_out) = self.settings.ui(
                     ctx,
                     &mut self.config,
                     self.backend.as_deref(),
@@ -232,6 +238,9 @@ impl Haru {
                 );
                 if sign_in {
                     self.account.open();
+                }
+                if sign_out {
+                    self.sign_out_request = Some(self.workshop.send(Request::SignOut));
                 }
                 if changed {
                     // A changed socket means a different renderer, and a
@@ -274,6 +283,17 @@ impl Haru {
                 // Nothing to sign in with and no client to ask is exactly the
                 // state worth interrupting for.
                 _ => self.account.observed(false, false),
+            }
+        }
+
+        if let Some(id) = self.sign_out_request
+            && let Some(reply) = self.workshop.take(id)
+        {
+            self.sign_out_request = None;
+            match reply {
+                Reply::SignedOut => self.account.signed_out(),
+                Reply::Failed(why) => self.account.failed(why),
+                _ => {}
             }
         }
 
