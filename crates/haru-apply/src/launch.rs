@@ -29,23 +29,33 @@ const READY: Duration = Duration::from_secs(25);
 /// How often to ask while waiting.
 const POLL: Duration = Duration::from_millis(200);
 
-/// Whether a renderer is already running, whoever started it.
+/// How long to give an engine to go away after it is asked to.
+const STOP: Duration = Duration::from_secs(8);
+
+/// The running engine's process id, whoever started it.
 ///
 /// Read from `/proc` rather than a pid file, because the pid file belongs to
-/// whichever script wrote it and there may not be one. Processes that cannot
-/// be read are somebody else's and are not kirie's.
+/// whichever script wrote it and there may not be one. `/proc/<pid>/exe` is
+/// the binary itself, so a process that rewrote its command line still answers
+/// honestly and no shell holding the word "kirie" is mistaken for the engine.
+#[must_use]
+pub fn pid() -> Option<u32> {
+    std::fs::read_dir("/proc")
+        .ok()?
+        .flatten()
+        .find_map(|entry| {
+            let exe = std::fs::read_link(entry.path().join("exe")).ok()?;
+            if exe.file_name()? != "kirie" {
+                return None;
+            }
+            entry.file_name().to_str()?.parse().ok()
+        })
+}
+
+/// Whether a renderer is already running.
 #[must_use]
 pub fn running() -> bool {
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return false;
-    };
-    entries.flatten().any(|entry| {
-        // `/proc/<pid>/exe` is the binary itself, so a process that renamed
-        // its command line still answers honestly, and no shell running the
-        // word "kirie" is mistaken for the engine.
-        std::fs::read_link(entry.path().join("exe"))
-            .is_ok_and(|exe| exe.file_name().is_some_and(|name| name == "kirie"))
-    })
+    pid().is_some()
 }
 
 /// The screens this machine has, asked of the kernel.
@@ -81,18 +91,65 @@ pub fn connectors() -> Vec<String> {
     found
 }
 
-/// Starts a renderer showing `dir` on `screen`, and waits for it to answer.
+/// One screen the engine should own, and what it should show there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Plan {
+    /// The output name, as a compositor and the kernel both spell it.
+    pub screen: String,
+    /// What to put there. `None` inherits whatever the engine takes as its
+    /// default, which is the last wallpaper named on the command line.
+    pub wallpaper: Option<PathBuf>,
+}
+
+impl Plan {
+    /// A screen showing a wallpaper.
+    #[must_use]
+    pub fn showing(screen: impl Into<String>, wallpaper: impl Into<PathBuf>) -> Self {
+        Self {
+            screen: screen.into(),
+            wallpaper: Some(wallpaper.into()),
+        }
+    }
+
+    /// A screen the engine should own without being told what to put on it.
+    #[must_use]
+    pub fn empty(screen: impl Into<String>) -> Self {
+        Self {
+            screen: screen.into(),
+            wallpaper: None,
+        }
+    }
+}
+
+/// Starts one engine owning every screen in `plan`, and waits for it to answer.
+///
+/// One engine, every screen — which is the whole reason to declare them all
+/// here. The engine matches an output per `--screen-root` and gives the rest
+/// no surface, and a screen it does not own cannot be handed one later: `bg`
+/// takes any name and loads the wallpaper, but there is nothing on that output
+/// to draw it on. Everything *after* this is the socket's job, and the only
+/// thing that needs another launch is the set of outputs changing.
 ///
 /// Blocking, for up to [`READY`]: the caller is expected to be off the drawing
 /// thread. Returns once the control socket replies, which is also when the
-/// wallpaper is actually up.
+/// first wallpaper is up.
 ///
 /// # Errors
-/// When one is already running, when the process cannot be started, or when it
-/// never answers.
-pub fn start(binary: &Path, socket: &Path, screen: &str, dir: &Path) -> Result<(), String> {
+/// When one is already running, when no screen has a wallpaper, when the
+/// process cannot be started, or when it never answers.
+pub fn start(binary: &Path, socket: &Path, plan: &[Plan]) -> Result<(), String> {
     if running() {
         return Err("a renderer is already running".to_owned());
+    }
+    // The request is checked before the machine: what was asked for can be
+    // wrong on a machine where everything is in place.
+    if plan.is_empty() {
+        return Err("no screen to start on".to_owned());
+    }
+    // The engine refuses to start without one — "At least one background ID
+    // must be specified" — and a screen with none of its own inherits it.
+    if !plan.iter().any(|screen| screen.wallpaper.is_some()) {
+        return Err("no wallpaper to start with".to_owned());
     }
     // Checked here rather than left to the spawn: `setsid` is what gets
     // started, and it reports a missing engine by exiting quietly, which would
@@ -104,14 +161,71 @@ pub fn start(binary: &Path, socket: &Path, screen: &str, dir: &Path) -> Result<(
     // The `--flag=value` form on purpose: an engine that predates a flag skips
     // the whole token, where `--flag value` leaves the value behind as a
     // positional argument and is read as a wallpaper.
-    let arguments = [
-        format!("--control-socket={}", socket.display()),
-        format!("--screen-root={screen}"),
-        format!("--bg={}", dir.display()),
-    ];
+    let mut arguments = vec![format!("--control-socket={}", socket.display())];
+    for screen in plan {
+        // Order is load-bearing: a `--bg` attaches to the screen declared
+        // before it, so the pair travels together.
+        arguments.push(format!("--screen-root={}", screen.screen));
+        if let Some(wallpaper) = screen.wallpaper.as_ref() {
+            arguments.push(format!("--bg={}", wallpaper.display()));
+        }
+    }
 
     spawn_detached(binary, &arguments)?;
     wait_for(socket)
+}
+
+/// Stops the running engine.
+///
+/// By signal, because the protocol has none: there is no `quit` verb, and the
+/// engine stops the way its own daemon stops it. Through `kill(1)` rather than
+/// the syscall, for the same reason the launch goes through `setsid(1)`.
+///
+/// # Errors
+/// When none is running, when the signal cannot be sent, or when it is still
+/// there afterwards.
+pub fn stop() -> Result<(), String> {
+    let Some(pid) = pid() else {
+        return Err("no renderer is running".to_owned());
+    };
+
+    let sent = Command::new("kill")
+        .arg("-TERM")
+        .arg(pid.to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|error| format!("could not stop the renderer ({error})"))?;
+    if !sent.success() {
+        return Err("the renderer refused to stop".to_owned());
+    }
+
+    // It unlinks its socket on the way out; do not outrun it.
+    let deadline = Instant::now() + STOP;
+    while Instant::now() < deadline {
+        if !running() {
+            return Ok(());
+        }
+        std::thread::sleep(POLL);
+    }
+    Err("the renderer is still running".to_owned())
+}
+
+/// Stops whatever is running and starts one owning `plan`.
+///
+/// What a changed set of outputs needs. Everything else — a different
+/// wallpaper on a screen the engine already owns — is a `bg` over the socket
+/// and must not come through here: a relaunch blanks every screen for as long
+/// as the first scene takes to build.
+///
+/// # Errors
+/// When the running engine cannot be stopped, or the new one cannot start.
+pub fn restart(binary: &Path, socket: &Path, plan: &[Plan]) -> Result<(), String> {
+    if running() {
+        stop()?;
+    }
+    start(binary, socket, plan)
 }
 
 /// Where a started engine's output goes.
@@ -217,14 +331,48 @@ mod tests {
     }
 
     #[test]
+    fn a_plan_with_no_wallpaper_anywhere_is_refused() {
+        // The engine is fatal without one — "At least one background ID must
+        // be specified" — so this would start nothing and blame the socket.
+        if running() {
+            return;
+        }
+        let refused = start(
+            Path::new("/nonexistent/kirie"),
+            Path::new("/nonexistent/haru-test.sock"),
+            &[Plan::empty("DP-1"), Plan::empty("HDMI-A-1")],
+        );
+        assert_eq!(refused, Err("no wallpaper to start with".to_owned()));
+    }
+
+    #[test]
+    fn an_empty_plan_is_refused() {
+        if running() {
+            return;
+        }
+        let refused = start(
+            Path::new("/nonexistent/kirie"),
+            Path::new("/nonexistent/haru-test.sock"),
+            &[],
+        );
+        assert_eq!(refused, Err("no screen to start on".to_owned()));
+    }
+
+    #[test]
+    fn stopping_nothing_says_so() {
+        if !running() {
+            assert_eq!(stop(), Err("no renderer is running".to_owned()));
+        }
+    }
+
+    #[test]
     fn starting_one_beside_another_is_refused() {
         // Only when one is actually up: this machine may have none.
         if running() {
             let refused = start(
                 Path::new("/nonexistent/kirie"),
                 Path::new("/nonexistent/haru-test.sock"),
-                "DP-1",
-                Path::new("/tmp"),
+                &[Plan::showing("DP-1", "/tmp")],
             );
             assert_eq!(refused, Err("a renderer is already running".to_owned()));
         }
@@ -240,8 +388,7 @@ mod tests {
         let refused = start(
             Path::new("/nonexistent/kirie"),
             Path::new("/nonexistent/haru-test.sock"),
-            "DP-1",
-            Path::new("/tmp"),
+            &[Plan::showing("DP-1", "/tmp")],
         );
         assert_eq!(refused, Err("no renderer at /nonexistent/kirie".to_owned()));
     }
