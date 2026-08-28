@@ -180,7 +180,8 @@ mod tests {
     #[test]
     fn a_log_line_is_reduced_to_its_message() {
         // The renderer's refusals are the useful part; its timestamps are not.
-        let line = "2026-08-28T00:58:53.4Z ERROR kirie::compat::run: cannot screenshot a web wallpaper";
+        let line =
+            "2026-08-28T00:58:53.4Z ERROR kirie::compat::run: cannot screenshot a web wallpaper";
         assert_eq!(strip_log_prefix(line), "cannot screenshot a web wallpaper");
         assert_eq!(strip_log_prefix("plain words"), "plain words");
     }

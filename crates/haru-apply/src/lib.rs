@@ -12,9 +12,11 @@ use std::path::{Path, PathBuf};
 
 mod kirie;
 mod offscreen;
+mod stream;
 
 pub use kirie::Kirie;
 pub use offscreen::Offscreen;
+pub use stream::{Frame, Preview as PreviewStream};
 
 /// A screen a wallpaper can go on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,5 +70,7 @@ pub trait Backend {
 #[must_use]
 pub fn detect(socket: Option<PathBuf>) -> Option<Box<dyn Backend>> {
     let kirie = Kirie::new(socket);
-    kirie.available().then(|| Box::new(kirie) as Box<dyn Backend>)
+    kirie
+        .available()
+        .then(|| Box::new(kirie) as Box<dyn Backend>)
 }

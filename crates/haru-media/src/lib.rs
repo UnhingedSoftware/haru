@@ -28,6 +28,14 @@ const IN_FLIGHT: usize = 6;
 /// Twice the tile so a preview stays sharp on a HiDPI screen, and no more.
 const MAX_EDGE: u32 = 320;
 
+/// How many decoded previews to keep.
+///
+/// Every tile ever scrolled past would otherwise stay resident: a decoded
+/// preview is up to 320x320 RGBA, about 400 KB, so a few hundred pages of
+/// browsing is hundreds of megabytes of pictures nobody is looking at. Ten
+/// pages' worth is enough that scrolling back is instant.
+const KEEP: usize = 240;
+
 /// Refuse anything larger, before decoding it.
 ///
 /// Preview art is a few hundred kilobytes. Ten megabytes is not a preview, and
@@ -53,6 +61,8 @@ struct Decoded {
 /// Every preview this session has looked at.
 pub struct Previews {
     entries: HashMap<String, State>,
+    /// What was asked for, oldest first, so the oldest can be dropped.
+    order: Vec<String>,
     queue: Arc<Mutex<Vec<String>>>,
     active: Arc<Mutex<usize>>,
     inbound: Receiver<Decoded>,
@@ -72,6 +82,7 @@ impl Previews {
         let (outbound, inbound) = channel();
         Self {
             entries: HashMap::new(),
+            order: Vec::new(),
             queue: Arc::new(Mutex::new(Vec::new())),
             active: Arc::new(Mutex::new(0)),
             inbound,
@@ -93,7 +104,7 @@ impl Previews {
             None => {}
         }
 
-        self.entries.insert(url.to_owned(), State::Loading);
+        self.remember(url.to_owned());
         if let Ok(mut queue) = self.queue.lock() {
             queue.push(url.to_owned());
         }
@@ -121,12 +132,39 @@ impl Previews {
             None => {}
         }
 
-        self.entries.insert(key.clone(), State::Loading);
+        self.remember(key.clone());
         if let Ok(mut queue) = self.queue.lock() {
             queue.push(key);
         }
         self.pump(ctx);
         None
+    }
+
+    /// Records a new entry, dropping the oldest once there are too many.
+    ///
+    /// Oldest-first rather than least-recently-used: browsing goes forward,
+    /// and the pictures behind you are the ones you have stopped looking at.
+    fn remember(&mut self, key: String) {
+        self.entries.insert(key.clone(), State::Loading);
+        self.order.push(key);
+
+        while self.order.len() > KEEP {
+            let Some(oldest) = self.order.first().cloned() else {
+                break;
+            };
+            self.order.remove(0);
+            // A picture still on its way is left alone: dropping it would let
+            // its worker finish into an entry nothing asked for.
+            if !matches!(self.entries.get(&oldest), Some(State::Loading)) {
+                self.entries.remove(&oldest);
+            }
+        }
+    }
+
+    /// How many previews are kept.
+    #[must_use]
+    pub fn held(&self) -> usize {
+        self.entries.len()
     }
 
     /// How many previews are still on their way.
@@ -259,5 +297,21 @@ mod tests {
     #[test]
     fn an_empty_cache_is_loading_nothing() {
         assert_eq!(Previews::new().loading(), 0);
+    }
+
+    #[test]
+    fn the_cache_stops_growing() {
+        // Without a cap, every tile ever scrolled past stays decoded — which
+        // is hundreds of megabytes after an evening of browsing.
+        let mut previews = Previews::new();
+        for index in 0..(KEEP * 3) {
+            previews.remember(format!("https://example.invalid/{index}.jpg"));
+            // Only entries that finished are droppable, and nothing here has.
+            previews.entries.insert(
+                format!("https://example.invalid/{index}.jpg"),
+                State::Failed,
+            );
+        }
+        assert!(previews.held() <= KEEP + 1, "{}", previews.held());
     }
 }

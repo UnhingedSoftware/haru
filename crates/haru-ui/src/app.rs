@@ -153,6 +153,12 @@ impl Haru {
 
         self.tabs(ctx);
 
+        // The preview holds a renderer, and a renderer holds a wallpaper.
+        // Leaving the tab gives both back.
+        if self.tab != Tab::Preview {
+            self.preview.suspend();
+        }
+
         match self.tab {
             Tab::Workshop => self.browser.ui(ctx, &mut self.previews, self.sidebar),
             Tab::Library => {
@@ -219,9 +225,11 @@ impl Haru {
                         if ui
                             .selectable_label(
                                 chosen,
-                                RichText::new(tab.label())
-                                    .size(13.0)
-                                    .color(if chosen { theme::TEXT } else { theme::MUTED }),
+                                RichText::new(tab.label()).size(13.0).color(if chosen {
+                                    theme::TEXT
+                                } else {
+                                    theme::MUTED
+                                }),
                             )
                             .clicked()
                         {

@@ -197,10 +197,8 @@ impl Library {
 
         for screen in self.screens.clone() {
             let chosen = self.target.as_deref() == Some(screen.name.as_str());
-            let response = ui.allocate_response(
-                Vec2::new(ui.available_width(), 92.0),
-                Sense::click(),
-            );
+            let response =
+                ui.allocate_response(Vec2::new(ui.available_width(), 92.0), Sense::click());
             let rect = response.rect;
             let rounding = Rounding::same(8.0);
             ui.painter()

@@ -247,7 +247,9 @@ mod tests {
         // cache inside the item, and they would otherwise show as untitled
         // wallpapers that cannot be applied.
         let scratch = Scratch::new("ghost");
-        let dir = scratch.0.join("steamapps/workshop/content/431960/999/.cache");
+        let dir = scratch
+            .0
+            .join("steamapps/workshop/content/431960/999/.cache");
         let _ = std::fs::create_dir_all(&dir);
 
         assert!(scan(std::slice::from_ref(&scratch.0)).is_empty());

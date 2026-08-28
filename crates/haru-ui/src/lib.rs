@@ -13,9 +13,9 @@ mod app;
 mod library;
 mod preview;
 mod settings;
-mod widgets;
-mod tile;
 pub mod theme;
+mod tile;
+mod widgets;
 
 pub use app::{Haru, Tab};
 pub use library::Library;
@@ -184,21 +184,14 @@ impl Browser {
     /// Runs the current filters as they stand, cursor included.
     fn run(&mut self) {
         self.status = Status::Searching;
-        self.awaiting = Some(
-            self.workshop
-                .send(Request::Browse(self.filters.to_query())),
-        );
+        self.awaiting = Some(self.workshop.send(Request::Browse(self.filters.to_query())));
     }
 
     /// The filter sidebar.
     fn sidebar(&mut self, ui: &mut egui::Ui) {
         ui.add_space(8.0);
         ui.heading("haru");
-        ui.label(
-            RichText::new("Wallpaper Engine Workshop")
-                .small()
-                .weak(),
-        );
+        ui.label(RichText::new("Wallpaper Engine Workshop").small().weak());
         ui.add_space(10.0);
 
         let search = ui.add(
@@ -291,7 +284,10 @@ impl Browser {
                         .width(200.0)
                         .show_ui(ui, |ui| {
                             if ui
-                                .selectable_label(selected.is_none(), format!("Any {}", group.label))
+                                .selectable_label(
+                                    selected.is_none(),
+                                    format!("Any {}", group.label),
+                                )
                                 .clicked()
                                 && let Some(slot) = self.filters.chosen.get_mut(index)
                             {
@@ -370,13 +366,8 @@ impl Browser {
                     ui.horizontal(|ui| {
                         for (column, found) in chunk.iter().enumerate() {
                             let index = row * columns + column;
-                            let clicked = tile::show(
-                                ui,
-                                previews,
-                                found,
-                                TILE,
-                                self.selected == Some(index),
-                            );
+                            let clicked =
+                                tile::show(ui, previews, found, TILE, self.selected == Some(index));
                             if clicked {
                                 self.selected = Some(index);
                             }
@@ -388,8 +379,8 @@ impl Browser {
                 if self.infinite {
                     // A marker at the end of the list: once it is on screen,
                     // there is nothing below and the next page is wanted.
-                    let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), Sense::hover());
+                    let (rect, _) = ui
+                        .allocate_exact_size(egui::vec2(ui.available_width(), 1.0), Sense::hover());
                     hit_bottom = ui.is_rect_visible(rect);
                     if self.awaiting.is_some() {
                         ui.vertical_centered(|ui| ui.spinner());
@@ -499,8 +490,8 @@ impl Browser {
             // Endless scrolling has no pages to number, and a strip that said
             // "page 3 of 400" beside a grid that never ends would be a lie.
             if self.infinite {
-                let shown = self.appended.len()
-                    + self.page.as_ref().map_or(0, |page| page.items.len());
+                let shown =
+                    self.appended.len() + self.page.as_ref().map_or(0, |page| page.items.len());
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.weak(format!("{} loaded", thousands(shown as u64)));
                 });
@@ -649,11 +640,20 @@ mod tests {
     fn the_page_strip_always_reaches_both_ends() {
         // Whatever the window shows, page one and the last page must be one
         // click away, or a deep search is a trap.
-        for (current, pages) in [(1_u32, 1_u32), (1, 9), (5, 9), (60, 132_618), (132_618, 132_618)] {
+        for (current, pages) in [
+            (1_u32, 1_u32),
+            (1, 9),
+            (5, 9),
+            (60, 132_618),
+            (132_618, 132_618),
+        ] {
             let shown: Vec<u32> = strip(current, pages).into_iter().flatten().collect();
             assert!(shown.contains(&1), "no first page at {current}/{pages}");
             assert!(shown.contains(&pages), "no last page at {current}/{pages}");
-            assert!(shown.contains(&current), "no current page at {current}/{pages}");
+            assert!(
+                shown.contains(&current),
+                "no current page at {current}/{pages}"
+            );
         }
     }
 

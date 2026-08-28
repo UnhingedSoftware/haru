@@ -37,7 +37,11 @@ fn parse(arguments: &[String]) -> Result<Opened, String> {
                 opened.tab = Tab::Preview;
             }
             "--search" => {
-                opened.search = Some(rest.next().ok_or("--search needs something to search for")?.clone());
+                opened.search = Some(
+                    rest.next()
+                        .ok_or("--search needs something to search for")?
+                        .clone(),
+                );
                 opened.tab = Tab::Workshop;
             }
             name => {

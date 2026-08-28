@@ -76,7 +76,11 @@ fn load_fonts(ctx: &egui::Context) {
         egui::FontData::from_owned(bytes).tweak(egui::FontTweak::default()),
     );
     for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-        fonts.families.entry(family).or_default().push("cjk".to_owned());
+        fonts
+            .families
+            .entry(family)
+            .or_default()
+            .push("cjk".to_owned());
     }
     ctx.set_fonts(fonts);
 }

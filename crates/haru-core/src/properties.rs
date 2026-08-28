@@ -131,11 +131,11 @@ fn property(key: &str, raw: &serde_json::Value) -> Option<Property> {
             max: number(object.get("max")).unwrap_or(1.0),
             step: number(object.get("step")).unwrap_or(0.01),
         },
-        "color" => Kind::Color(triple(value.and_then(serde_json::Value::as_str).unwrap_or(""))),
+        "color" => Kind::Color(triple(
+            value.and_then(serde_json::Value::as_str).unwrap_or(""),
+        )),
         "combo" => Kind::Combo {
-            value: value
-                .map(scalar_to_string)
-                .unwrap_or_default(),
+            value: value.map(scalar_to_string).unwrap_or_default(),
             options: object
                 .get("options")
                 .and_then(serde_json::Value::as_array)
@@ -280,7 +280,10 @@ mod tests {
 
         let found = read(&dir);
         assert_eq!(found.len(), 4);
-        assert_eq!(found.first().map(|p| p.kind.clone()), Some(Kind::Bool(true)));
+        assert_eq!(
+            found.first().map(|p| p.kind.clone()),
+            Some(Kind::Bool(true))
+        );
         assert!(matches!(
             found.get(1).map(|p| p.kind.clone()),
             Some(Kind::Slider { max, .. }) if (max - 2.0).abs() < f64::EPSILON
@@ -301,7 +304,8 @@ mod tests {
     fn a_heading_is_not_a_control() {
         // Authors put `text` entries between controls as section titles, and
         // drawing them as editable fields is the tag soup this avoids.
-        let dir = write(r#"{"general":{"properties":{"banner":{"type":"text","value":"Colours"}}}}"#);
+        let dir =
+            write(r#"{"general":{"properties":{"banner":{"type":"text","value":"Colours"}}}}"#);
         assert!(read(&dir).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -341,7 +345,10 @@ mod tests {
     fn a_key_with_no_label_is_made_readable() {
         assert_eq!(pretty("ui_browse_properties_scheme_color"), "Scheme color");
         assert_eq!(pretty("glow_amount"), "Glow amount");
-        assert_eq!(pretty("ui_editor_effect_local_contrast_title"), "Local contrast");
+        assert_eq!(
+            pretty("ui_editor_effect_local_contrast_title"),
+            "Local contrast"
+        );
     }
 
     #[test]
@@ -357,9 +364,12 @@ mod tests {
         // The label path was clipped and the key path was not, so a property
         // keyed with a 200-byte image tag still filled the panel.
         let long = "img_src_http_example_invalid_".repeat(9);
-        let shown = property(&long, &serde_json::json!({"type": "textinput", "value": ""}))
-            .map(|found| found.label)
-            .unwrap_or_default();
+        let shown = property(
+            &long,
+            &serde_json::json!({"type": "textinput", "value": ""}),
+        )
+        .map(|found| found.label)
+        .unwrap_or_default();
         assert!(shown.chars().count() <= 49, "{shown}");
     }
 
