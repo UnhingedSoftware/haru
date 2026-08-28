@@ -164,7 +164,15 @@ impl Preview {
 
     /// Draws the view.
     pub fn ui(&mut self, ctx: &egui::Context, sidebar: bool) {
-        self.watching.store(true, Ordering::Relaxed);
+        // Waking on the way back in matters: the worker parks on the wake
+        // channel whenever nobody is watching, and the wake that a pending
+        // request sent may have been the one that parked it. Without this, a
+        // preview opened before its first frame — which is every preview
+        // opened from the command line — waits for a frame nobody is
+        // rendering.
+        if !self.watching.swap(true, Ordering::Relaxed) {
+            let _ = self.wake.send(());
+        }
         self.collect(ctx);
 
         // egui draws on events, and frames arriving on a channel are not one.
