@@ -29,7 +29,7 @@
 //! # }
 //! ```
 
-use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
+use std::sync::mpsc::{Receiver, Sender, channel};
 
 use tapline::{BrowsePage, BrowseQuery, Session};
 
@@ -108,11 +108,12 @@ impl Workshop {
     }
 
     /// Takes one answer, if any has arrived. Never blocks.
+    ///
+    /// A disconnected worker reads the same as an empty queue on purpose: the
+    /// UI's response to both is to keep drawing, and a dead worker has already
+    /// shown itself through whatever request never came back.
     pub fn poll(&self) -> Option<(RequestId, Reply)> {
-        match self.inbound.try_recv() {
-            Ok(answer) => Some(answer),
-            Err(TryRecvError::Empty | TryRecvError::Disconnected) => None,
-        }
+        self.inbound.try_recv().ok()
     }
 }
 

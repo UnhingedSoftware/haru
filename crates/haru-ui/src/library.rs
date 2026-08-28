@@ -620,7 +620,7 @@ impl Library {
             Order::Kind => {
                 shown.sort_by_key(|(_, item)| (item.kind.clone(), item.title.to_lowercase()));
             }
-            Order::Size => shown.sort_by(|(_, left), (_, right)| right.size.cmp(&left.size)),
+            Order::Size => shown.sort_by_key(|(_, item)| std::cmp::Reverse(item.size)),
         }
         shown
     }

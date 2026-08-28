@@ -288,8 +288,12 @@ mod tests {
         // Flattening them would ask for all-or-any across axes, which is a
         // different search that still returns a plausible page.
         let mut filters = Filters::new();
-        filters.chosen[0] = Some("Scene".to_owned());
-        filters.chosen[2] = Some("Anime".to_owned());
+        if let Some(slot) = filters.chosen.get_mut(0) {
+            *slot = Some("Scene".to_owned());
+        }
+        if let Some(slot) = filters.chosen.get_mut(2) {
+            *slot = Some("Anime".to_owned());
+        }
 
         let query = filters.to_query();
         assert_eq!(

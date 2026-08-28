@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 use std::io::Read as _;
-use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 
 /// How many downloads run at once.
@@ -143,18 +143,13 @@ impl Previews {
     /// Uploading happens here rather than on the worker because a texture
     /// belongs to the render context, which is not this thread's to touch.
     fn drain(&mut self, ctx: &egui::Context) {
-        loop {
-            match self.inbound.try_recv() {
-                Ok(Decoded { url, image }) => {
-                    let state = image.map_or(State::Failed, |image| {
-                        State::Ready(ctx.load_texture(&url, image, egui::TextureOptions::LINEAR))
-                    });
-                    self.entries.insert(url, state);
-                    if let Ok(mut active) = self.active.lock() {
-                        *active = active.saturating_sub(1);
-                    }
-                }
-                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+        while let Ok(Decoded { url, image }) = self.inbound.try_recv() {
+            let state = image.map_or(State::Failed, |image| {
+                State::Ready(ctx.load_texture(&url, image, egui::TextureOptions::LINEAR))
+            });
+            self.entries.insert(url, state);
+            if let Ok(mut active) = self.active.lock() {
+                *active = active.saturating_sub(1);
             }
         }
         self.pump(ctx);

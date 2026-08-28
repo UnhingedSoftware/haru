@@ -126,7 +126,9 @@ pub fn scan(roots: &[PathBuf]) -> Vec<Installed> {
         }
     }
 
-    items.sort_by(|left, right| right.installed.cmp(&left.installed));
+    // Newest first, which is what someone looking for what they just
+    // subscribed to wants.
+    items.sort_by_key(|item| std::cmp::Reverse(item.installed));
     items
 }
 
