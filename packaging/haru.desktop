@@ -1,0 +1,28 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=haru
+GenericName=Wallpaper Picker
+Comment=Browse the Wallpaper Engine Workshop and put wallpapers up
+Exec=haru
+TryExec=haru
+Icon=haru
+Terminal=false
+StartupNotify=true
+StartupWMClass=haru
+Categories=Graphics;Viewer;
+Keywords=wallpaper;workshop;steam;kirie;background;desktop;
+
+Actions=Library;Workshop;Settings;
+
+[Desktop Action Library]
+Name=Library
+Exec=haru library
+
+[Desktop Action Workshop]
+Name=Workshop
+Exec=haru workshop
+
+[Desktop Action Settings]
+Name=Settings
+Exec=haru settings

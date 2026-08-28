@@ -1026,6 +1026,7 @@ dependencies = [
  "eframe",
  "egui",
  "haru-ui",
+ "image",
 ]
 
 [[package]]

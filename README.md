@@ -34,7 +34,12 @@ where kirie, Wallpaper Engine and Steam already look.
 
 ```sh
 cargo build --release        # target/release/haru
+packaging/install.sh target/release/haru
 ```
+
+`install.sh` puts the binary in `~/.local/bin` and the desktop entry and icons
+in `~/.local/share`, so haru shows up in the application launcher. `PREFIX=/usr`
+installs system-wide.
 
 Needs [tapline](https://github.com/UnhingedSoftware/tapline) checked out beside
 this repository.

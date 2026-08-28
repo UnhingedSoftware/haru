@@ -4,6 +4,20 @@ use haru_ui::{Haru, Tab};
 
 const INITIAL: [f32; 2] = [1280.0, 820.0];
 
+const APP_ID: &str = "haru";
+
+const ICON: &[u8] = include_bytes!("../../../packaging/haru-256.png");
+
+fn icon() -> Option<egui::IconData> {
+    let decoded = image::load_from_memory(ICON).ok()?.into_rgba8();
+    let (width, height) = decoded.dimensions();
+    Some(egui::IconData {
+        rgba: decoded.into_raw(),
+        width,
+        height,
+    })
+}
+
 struct Opened {
     tab: Tab,
     search: Option<String>,
@@ -52,12 +66,18 @@ fn main() -> ExitCode {
         }
     };
 
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size(INITIAL)
+        .with_min_inner_size([720.0, 480.0])
+        .with_title("haru")
+        .with_app_id(APP_ID)
+        .with_transparent(true);
+    if let Some(icon) = icon() {
+        viewport = viewport.with_icon(icon);
+    }
+
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size(INITIAL)
-            .with_min_inner_size([720.0, 480.0])
-            .with_title("haru")
-            .with_transparent(true),
+        viewport,
         ..eframe::NativeOptions::default()
     };
 

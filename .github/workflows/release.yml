@@ -102,19 +102,20 @@ jobs:
       - run: cargo build --release -p haru
         working-directory: haru
 
-      - name: Name the artifact
+      - name: Name the artifacts
         run: |
           set -euo pipefail
           cp haru/target/release/haru haru-linux-x86_64
           chmod +x haru-linux-x86_64
-          ls -la haru-linux-x86_64
+          tar -czf haru-desktop-linux.tar.gz -C haru packaging
+          ls -la haru-linux-x86_64 haru-desktop-linux.tar.gz
 
       - name: Create or update the draft
         env:
           V: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          files=haru-linux-x86_64
+          files="haru-linux-x86_64 haru-desktop-linux.tar.gz"
           cp haru/RELEASE_NOTES.md .
           cat >> RELEASE_NOTES.md <<'EOF'
 
@@ -123,6 +124,7 @@ jobs:
           | File | What it is |
           | --- | --- |
           | `haru-linux-x86_64` | the picker — `chmod +x`, run |
+          | `haru-desktop-linux.tar.gz` | desktop entry and icons: `tar xf`, then `packaging/install.sh ./haru-linux-x86_64` |
 
           Browsing needs nothing. Installing needs a Steam account that owns
           Wallpaper Engine, once: `tapline login --qr`. Applying and previewing
