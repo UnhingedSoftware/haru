@@ -38,6 +38,7 @@ pub enum Reply {
     Subscribed,
     Unsubscribed,
     Installed { id: u64, dir: PathBuf },
+    NeedsAccount,
     Failed(String),
 }
 
@@ -204,10 +205,7 @@ async fn install(
         .await
     {
         Ok(_) => Reply::Installed { id: item_id, dir },
-        Err(error) if error.needs_login() => Reply::Failed(
-            "this needs a Steam account that owns Wallpaper Engine — sign in, or open Steam"
-                .to_owned(),
-        ),
+        Err(error) if error.needs_login() => Reply::NeedsAccount,
         Err(error) => Reply::Failed(error.to_string()),
     }
 }
@@ -291,9 +289,7 @@ async fn serve(
         Request::Unsubscribe { app, item } => {
             match session.unsubscribe_workshop_item(app, item).await {
                 Ok(()) => Reply::Unsubscribed,
-                Err(error) if error.needs_login() => Reply::Failed(
-                    "unsubscribing needs a signed-in account — run `tapline login --qr`".to_owned(),
-                ),
+                Err(error) if error.needs_login() => Reply::NeedsAccount,
                 Err(error) => Reply::Failed(error.to_string()),
             }
         }

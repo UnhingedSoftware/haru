@@ -54,6 +54,7 @@ pub struct Browser {
     settling: Option<(u32, f64)>,
     subscribing: Option<u64>,
     landing: Option<(u64, PathBuf, f64)>,
+    needs_account: bool,
 }
 
 impl Browser {
@@ -104,7 +105,12 @@ impl Browser {
             settling: None,
             subscribing: None,
             landing: None,
+            needs_account: false,
         }
+    }
+
+    pub fn take_needs_account(&mut self) -> bool {
+        std::mem::take(&mut self.needs_account)
     }
 
     pub fn take_landed(&mut self) -> Option<PathBuf> {
@@ -198,6 +204,15 @@ impl Browser {
                     self.downloading = None;
                     self.status = Status::Idle;
                     self.wait_for_files();
+                }
+                Reply::NeedsAccount => {
+                    self.fetching = None;
+                    self.downloading = None;
+                    self.subscribing = None;
+                    self.needs_account = true;
+                    self.status = Status::Failed(
+                        "haru has no way to fetch this yet — sign in, or start Steam".to_owned(),
+                    );
                 }
                 Reply::Failed(why) => {
                     self.fetching = None;

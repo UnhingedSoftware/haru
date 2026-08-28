@@ -167,6 +167,9 @@ impl Haru {
         if let Some((screen, dir)) = self.library.take_pending() {
             self.start_renderer(&screen, &dir);
         }
+        if self.browser.take_needs_account() {
+            self.account.open();
+        }
         if let Some((screen, dir)) = self.library.take_applied() {
             self.config.screens.insert(screen, dir);
             let _ = self.config.save();
