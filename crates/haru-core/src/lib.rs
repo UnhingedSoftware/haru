@@ -6,6 +6,7 @@
 
 pub mod config;
 pub mod library;
+pub mod overrides;
 pub mod properties;
 
 pub use config::Config;

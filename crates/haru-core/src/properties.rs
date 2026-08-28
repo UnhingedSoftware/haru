@@ -54,6 +54,32 @@ pub struct Property {
 }
 
 impl Property {
+    /// Takes a value back in the form the socket sends it.
+    ///
+    /// The inverse of [`Property::wire`], for folding a saved change into a
+    /// freshly-read wallpaper. A value that does not parse leaves the property
+    /// alone: a saved setting from an older version of a wallpaper should not
+    /// break the panel it appears in.
+    pub fn set_from_wire(&mut self, raw: &str) {
+        match &mut self.kind {
+            Kind::Bool(on) => *on = raw == "true" || raw == "1",
+            Kind::Slider { value, min, max, .. } => {
+                if let Ok(parsed) = raw.trim().parse::<f64>() {
+                    *value = parsed.clamp(*min, *max);
+                }
+            }
+            Kind::Color(rgb) => *rgb = triple(raw),
+            Kind::Combo { value, options } => {
+                // Only a value the wallpaper still offers: an option removed by
+                // an update would otherwise show as a selection nothing matches.
+                if options.iter().any(|(_, option)| option == raw) {
+                    *value = raw.to_owned();
+                }
+            }
+            Kind::Text(text) => *text = raw.to_owned(),
+        }
+    }
+
     /// The value as the control socket wants it.
     ///
     /// Colours are a space-separated triple, which is why they cannot be sent
@@ -328,6 +354,52 @@ mod tests {
         let dir = write(r#"{"title":"Just a video","type":"video"}"#);
         assert!(read(&dir).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_saved_value_goes_back_into_the_property_it_came_from() {
+        // What folding a saved change into a freshly-read wallpaper needs.
+        let mut slider = Property {
+            key: "speed".to_owned(),
+            label: "Speed".to_owned(),
+            kind: Kind::Slider {
+                value: 1.0,
+                min: 0.0,
+                max: 2.0,
+                step: 0.1,
+            },
+            order: 0,
+        };
+        slider.set_from_wire("1.5");
+        assert_eq!(slider.wire(), "1.5");
+
+        // Out of range is clamped rather than accepted: a wallpaper updated to
+        // a narrower range would otherwise be handed a value it cannot use.
+        slider.set_from_wire("99");
+        assert_eq!(slider.wire(), "2");
+
+        // Nonsense leaves it alone.
+        slider.set_from_wire("fast");
+        assert_eq!(slider.wire(), "2");
+    }
+
+    #[test]
+    fn a_saved_option_the_wallpaper_no_longer_offers_is_ignored() {
+        // An update can remove an option, and a selection nothing matches
+        // shows as a blank dropdown.
+        let mut combo = Property {
+            key: "mode".to_owned(),
+            label: "Mode".to_owned(),
+            kind: Kind::Combo {
+                value: "a".to_owned(),
+                options: vec![("A".to_owned(), "a".to_owned())],
+            },
+            order: 0,
+        };
+        combo.set_from_wire("gone");
+        assert_eq!(combo.wire(), "a");
+        combo.set_from_wire("a");
+        assert_eq!(combo.wire(), "a");
     }
 
     #[test]

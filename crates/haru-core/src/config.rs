@@ -86,6 +86,18 @@ impl Config {
         std::fs::rename(&staged, &path).map_err(|error| error.to_string())
     }
 
+    /// Where a download should land.
+    ///
+    /// The configured directory, or the first Steam library found — which is
+    /// where the Steam client, Wallpaper Engine and kirie already look, so an
+    /// item installed there is visible to all of them.
+    #[must_use]
+    pub fn install_root(&self) -> Option<PathBuf> {
+        self.install_dir
+            .clone()
+            .or_else(|| self.libraries().into_iter().next())
+    }
+
     /// Every Steam library to read, the probe's and the ones named here.
     #[must_use]
     pub fn libraries(&self) -> Vec<PathBuf> {

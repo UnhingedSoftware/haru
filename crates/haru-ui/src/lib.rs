@@ -26,6 +26,7 @@ use egui::{Align, Layout, RichText, Sense};
 use haru_core::{Filters, TAG_GROUPS, TREND_PERIODS, human_size, plain_text};
 use haru_media::Previews;
 use haru_workshop::{Reply, Request, RequestId, Workshop};
+use std::path::PathBuf;
 use tapline::{BrowsePage, BrowseResult, BrowseSort, TextTarget};
 
 /// How wide a tile is, before spacing.
@@ -62,6 +63,15 @@ pub struct Browser {
     awaiting: Option<RequestId>,
     status: Status,
     selected: Option<usize>,
+    /// Where a download lands, from the settings.
+    install_root: Option<PathBuf>,
+    /// The download in flight, if any: its item, and how far it has got.
+    downloading: Option<(u64, u64, u64)>,
+    /// Items installed during this session, so a tile stops offering to fetch
+    /// what is already on disk.
+    installed: Vec<u64>,
+    /// A wallpaper that just landed, for the window to put up.
+    landed: Option<PathBuf>,
 }
 
 impl Browser {
@@ -104,7 +114,24 @@ impl Browser {
             awaiting,
             status: Status::Searching,
             selected: None,
+            install_root: None,
+            downloading: None,
+            installed: Vec::new(),
+            landed: None,
         }
+    }
+
+    /// Takes the wallpaper that just finished downloading, if one did.
+    ///
+    /// Handed up rather than applied here: the browser does not own a screen
+    /// or a renderer, and downloading is not the same decision as displaying.
+    pub fn take_landed(&mut self) -> Option<PathBuf> {
+        self.landed.take()
+    }
+
+    /// Tells the browser where downloads should go.
+    pub fn set_install_root(&mut self, root: Option<PathBuf>) {
+        self.install_root = root;
     }
 
     /// Draws a frame.
@@ -159,7 +186,22 @@ impl Browser {
                     self.status = Status::Idle;
                 }
                 Reply::Count(_) => self.status = Status::Idle,
-                Reply::Failed(why) => self.status = Status::Failed(why),
+                Reply::Progress { id, done, total } => {
+                    self.downloading = Some((id, done, total));
+                }
+                Reply::Installed { id, dir } => {
+                    self.downloading = None;
+                    self.installed.push(id);
+                    self.status = Status::Idle;
+                    // Straight onto a screen: downloading a wallpaper you were
+                    // looking at is asking for it, and a second click to see it
+                    // is a step nobody wants.
+                    self.landed = Some(dir);
+                }
+                Reply::Failed(why) => {
+                    self.downloading = None;
+                    self.status = Status::Failed(why);
+                }
             }
         }
     }
@@ -355,8 +397,9 @@ impl Browser {
             return;
         }
 
-        // Whatever fits, so a wide window shows more rather than more padding.
-        let columns = ((ui.available_width() / (TILE + 12.0)).floor() as usize).max(1);
+        // Whatever fits, at a size that uses the whole width — a fixed tile
+        // leaves the remainder as a gap down the side of the grid.
+        let (columns, tile_width) = tile::columns_for(ui.available_width(), TILE, 8.0);
         let mut hit_bottom = false;
 
         egui::ScrollArea::vertical()
@@ -366,8 +409,13 @@ impl Browser {
                     ui.horizontal(|ui| {
                         for (column, found) in chunk.iter().enumerate() {
                             let index = row * columns + column;
-                            let clicked =
-                                tile::show(ui, previews, found, TILE, self.selected == Some(index));
+                            let clicked = tile::show(
+                                ui,
+                                previews,
+                                found,
+                                tile_width,
+                                self.selected == Some(index),
+                            );
                             if clicked {
                                 self.selected = Some(index);
                             }
@@ -435,7 +483,76 @@ impl Browser {
                     );
                 }
 
-                ui.add_space(8.0);
+                ui.add_space(10.0);
+
+                let id = found.item.id.get();
+                let on_disk = self.installed.contains(&id)
+                    || self
+                        .install_root
+                        .as_ref()
+                        .is_some_and(|root| {
+                            root.join(format!("steamapps/workshop/content/431960/{id}"))
+                                .join("project.json")
+                                .is_file()
+                        });
+
+                match self.downloading {
+                    // This one, in flight.
+                    Some((downloading, done, total)) if downloading == id => {
+                        let share = if total == 0 {
+                            0.0
+                        } else {
+                            #[expect(
+                                clippy::cast_precision_loss,
+                                reason = "a progress bar, not an accounting figure"
+                            )]
+                            let share = done as f32 / total as f32;
+                            share
+                        };
+                        ui.add(
+                            egui::ProgressBar::new(share)
+                                .text(format!("{} of {}", human_size(done), human_size(total))),
+                        );
+                    }
+                    // Something else is downloading; one at a time, because the
+                    // session behind it is one connection.
+                    Some(_) => {
+                        ui.add_enabled(
+                            false,
+                            egui::Button::new("Download").min_size(egui::vec2(ui.available_width(), 30.0)),
+                        );
+                    }
+                    None if on_disk => {
+                        ui.label(RichText::new("Already installed").color(theme::ACCENT));
+                    }
+                    None => {
+                        if ui
+                            .add_sized(
+                                [ui.available_width(), 30.0],
+                                egui::Button::new("Download and apply"),
+                            )
+                            .clicked()
+                        {
+                            match self.install_root.clone() {
+                                Some(root) => {
+                                    self.downloading = Some((id, 0, found.item.size));
+                                    self.workshop.send(Request::Install {
+                                        item: Box::new(found.item.clone()),
+                                        into: root,
+                                    });
+                                }
+                                None => {
+                                    self.status = Status::Failed(
+                                        "no Steam library to install into — set one in Settings"
+                                            .to_owned(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+
+                ui.add_space(10.0);
                 ui.label(RichText::new(human_size(found.item.size)).strong());
                 ui.label(format!("{} subscribers", thousands(found.subscriptions)));
                 ui.label(format!("{} views", thousands(found.views)));

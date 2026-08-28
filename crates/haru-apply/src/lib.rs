@@ -61,6 +61,16 @@ pub trait Backend {
     /// # Errors
     /// When the backend refuses the value or cannot be reached.
     fn set_property(&self, screen: &str, key: &str, value: &str) -> Result<(), String>;
+
+    /// Holds a value for the *next* wallpaper the backend loads.
+    ///
+    /// What editing a wallpaper that is not up yet needs: the value cannot be
+    /// applied to something not loaded, so it is staged and folded into the
+    /// build when that wallpaper goes on a screen.
+    ///
+    /// # Errors
+    /// When the backend refuses the value or cannot be reached.
+    fn stage(&self, key: &str, value: &str) -> Result<(), String>;
 }
 
 /// The backend for this machine, if there is one.

@@ -113,6 +113,7 @@ impl Haru {
         };
         let mut browser = Browser::with_filters(filters);
         browser.reconfigure(config.adult, config.per_page, config.infinite_scroll);
+        browser.set_install_root(config.install_root());
         let mut settings = Settings::default();
         settings.sync(&config);
 
@@ -160,7 +161,17 @@ impl Haru {
         }
 
         match self.tab {
-            Tab::Workshop => self.browser.ui(ctx, &mut self.previews, self.sidebar),
+            Tab::Workshop => {
+                self.browser.ui(ctx, &mut self.previews, self.sidebar);
+                // A wallpaper that just downloaded goes straight up: asking for
+                // it was the decision, and a second trip through the Library to
+                // see it is a step nobody wants.
+                if let Some(dir) = self.browser.take_landed() {
+                    self.library.refresh(&self.config, self.backend.as_deref());
+                    self.library.apply_to_target(&dir, self.backend.as_deref());
+                    self.scanned = true;
+                }
+            }
             Tab::Library => {
                 self.library.ui(
                     ctx,
@@ -169,13 +180,6 @@ impl Haru {
                     self.backend.as_deref(),
                     self.sidebar,
                 );
-                // Asking to preview something is how most people will reach
-                // that tab, so the library switches to it rather than leaving
-                // the button looking like it did nothing.
-                if let Some(item) = self.library.take_preview_request() {
-                    self.preview.open(item);
-                    self.tab = Tab::Preview;
-                }
             }
             Tab::Preview => self.preview.ui(ctx, self.sidebar),
             Tab::Settings => {
@@ -191,6 +195,7 @@ impl Haru {
                         self.config.per_page,
                         self.config.infinite_scroll,
                     );
+                    self.browser.set_install_root(self.config.install_root());
                     self.scanned = false;
                 }
             }

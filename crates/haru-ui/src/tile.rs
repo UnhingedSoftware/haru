@@ -13,6 +13,21 @@ use tapline::BrowseResult;
 /// How tall the caption under the art is.
 const CAPTION: f32 = 40.0;
 
+/// How wide each tile should be, and how many fit.
+///
+/// The obvious version — floor(width / tile) columns at a fixed tile size —
+/// leaves whatever does not divide evenly as dead space down the side of the
+/// grid. This spends the remainder on the tiles instead, so a row always
+/// reaches both edges.
+pub fn columns_for(available: f32, min_tile: f32, spacing: f32) -> (usize, f32) {
+    /// Past this a tile is a poster, not a thumbnail.
+    const MAX_TILE: f32 = 260.0;
+
+    let columns = ((available + spacing) / (min_tile + spacing)).floor().max(1.0);
+    let width = ((available - spacing * (columns - 1.0)) / columns).min(MAX_TILE);
+    (columns as usize, width.max(min_tile))
+}
+
 /// Draws one tile. Returns whether it was clicked.
 pub fn show(
     ui: &mut egui::Ui,
@@ -117,5 +132,33 @@ fn meta(found: &BrowseResult) -> String {
             score * 100.0
         ),
         None => format!("{kind} · {}", human_size(found.item.size)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_row_of_tiles_uses_the_whole_width() {
+        // The gap down the side of the grid was the remainder of a division
+        // nobody spent.
+        for available in [600.0_f32, 741.0, 1280.0, 1919.0] {
+            let (columns, width) = columns_for(available, 168.0, 8.0);
+            let used = width * columns as f32 + 8.0 * (columns as f32 - 1.0);
+            assert!(columns >= 1);
+            // Either the row fills the space, or the tiles hit their cap.
+            assert!(
+                used >= available - 1.0 || width >= 259.0,
+                "{available}: {columns} x {width} = {used}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_narrow_window_still_shows_one_tile() {
+        let (columns, width) = columns_for(50.0, 168.0, 8.0);
+        assert_eq!(columns, 1);
+        assert!(width >= 168.0, "a tile never shrinks below its minimum");
     }
 }

@@ -106,6 +106,21 @@ impl Backend for Kirie {
         }
     }
 
+    fn stage(&self, key: &str, value: &str) -> Result<(), String> {
+        // Recorded against no screen and folded into the next `bg` build, so
+        // the value arrives with the wallpaper rather than after it.
+        let reply = self.ask(&format!("stage {key} {value}"))?;
+        match reply.first().map(|line| line.trim()) {
+            Some("ok") => Ok(()),
+            Some("error") => Err(format!("the renderer would not take {key}")),
+            // An older renderer has no `stage`; the wallpaper still goes up,
+            // without the change, which is better than refusing to apply it.
+            Some("unknown command") => Err(format!("this renderer cannot pre-set {key}")),
+            Some(other) => Err(format!("unexpected answer: {other}")),
+            None => Err("the renderer stopped answering".to_owned()),
+        }
+    }
+
     fn apply(&self, screen: &str, dir: &Path) -> Result<(), String> {
         // The path is the rest of the line, so it needs no quoting and must
         // not be given any: kirie takes everything after the screen name

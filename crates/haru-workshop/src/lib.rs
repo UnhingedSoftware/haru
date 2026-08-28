@@ -31,7 +31,9 @@
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 
-use tapline::{BrowsePage, BrowseQuery, Session};
+use std::path::PathBuf;
+
+use tapline::{BrowsePage, BrowseQuery, Session, WorkshopItem};
 
 /// Wallpaper Engine, the Workshop haru exists for.
 pub const WALLPAPER_ENGINE: tapline_ids::AppId = tapline_ids::AppId(431_960);
@@ -43,6 +45,13 @@ pub enum Request {
     Browse(BrowseQuery),
     /// Count what a query matches, without fetching any of it.
     Count(BrowseQuery),
+    /// Download one item into a Steam library.
+    Install {
+        /// What to fetch, exactly as a search returned it — no second lookup.
+        item: Box<WorkshopItem>,
+        /// The Steam library root it lands under.
+        into: PathBuf,
+    },
 }
 
 /// What came back.
@@ -52,6 +61,22 @@ pub enum Reply {
     Page(Box<BrowsePage>),
     /// How many a query matched.
     Count(u32),
+    /// How far a download has got, in bytes.
+    Progress {
+        /// Which item.
+        id: u64,
+        /// Bytes written so far.
+        done: u64,
+        /// Bytes expected, when the plan knows.
+        total: u64,
+    },
+    /// An item is on disk, at this directory.
+    Installed {
+        /// Which item.
+        id: u64,
+        /// Where it landed.
+        dir: PathBuf,
+    },
     /// Steam, or the connection, said no.
     Failed(String),
 }
@@ -117,6 +142,73 @@ impl Workshop {
     }
 }
 
+/// Downloads one item, reporting progress as it goes.
+///
+/// The layout is steamcmd's — `<library>/steamapps/workshop/content/431960/<id>`
+/// — because that is where the Steam client, Wallpaper Engine and kirie all
+/// already look. Installing anywhere else would mean an item nothing but haru
+/// can see.
+async fn install(
+    session: &mut Session,
+    item: &WorkshopItem,
+    into: &std::path::Path,
+    replies: &Sender<(RequestId, Reply)>,
+    id: RequestId,
+) -> Reply {
+    let options = tapline::InstallOptions {
+        install_dir: into.to_owned(),
+        ..tapline::InstallOptions::default()
+    };
+    let dir = tapline::item_dir(into, item.app, item.id);
+
+    // Progress goes out as it happens rather than being collected: a 90 MB
+    // wallpaper is thirty seconds of nothing otherwise. tapline emits one of
+    // these per chunk written, which is far more often than a window needs, so
+    // only a change worth drawing is forwarded.
+    let item_id = item.id.get();
+    let outbound = replies.clone();
+    let mut last_sent = 0_u64;
+    let mut observe = move |event: tapline::Event| {
+        if let tapline::Event::Progress {
+            bytes_done,
+            bytes_total,
+        } = event
+        {
+            // Every half-percent, or the last one.
+            let step = bytes_total.max(1) / 200;
+            if bytes_done.saturating_sub(last_sent) < step && bytes_done < bytes_total {
+                return;
+            }
+            last_sent = bytes_done;
+            let _ = outbound.send((
+                id,
+                Reply::Progress {
+                    id: item_id,
+                    done: bytes_done,
+                    total: bytes_total,
+                },
+            ));
+        }
+    };
+
+    match session
+        .download_workshop_item_observed(item, &options, &mut observe)
+        .await
+    {
+        Ok(_) => Reply::Installed {
+            id: item_id,
+            dir,
+        },
+        // The one failure worth saying plainly: Wallpaper Engine's depot is
+        // not anonymously accessible, and the fix is one command.
+        Err(error) if error.needs_login() => Reply::Failed(
+            "this needs a Steam account that owns Wallpaper Engine — run `tapline login --qr` once"
+                .to_owned(),
+        ),
+        Err(error) => Reply::Failed(error.to_string()),
+    }
+}
+
 /// The worker: one runtime, one session, requests in order.
 fn worker(requests: &Receiver<(RequestId, Request)>, replies: &Sender<(RequestId, Reply)>) {
     let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -160,6 +252,7 @@ fn worker(requests: &Receiver<(RequestId, Request)>, replies: &Sender<(RequestId
                     Ok(total) => Reply::Count(total),
                     Err(error) => Reply::Failed(error.to_string()),
                 },
+                Request::Install { item, into } => install(session, &item, &into, replies, id).await,
             }
         });
 
