@@ -1,0 +1,44 @@
+# git-cliff: generates the release changelog and computes the next semver version
+# from Conventional Commit messages since the last tag. Used by release.yml when a
+# draft release is created.
+#
+#   fix:              -> patch   (v0.1.0 -> v0.1.1)
+#   feat:             -> minor   (v0.1.0 -> v0.2.0)
+#   feat!: / BREAKING -> bump + a **BREAKING** marker in the notes
+#     (while 0.x, a breaking change bumps the minor per SemVer; from 1.0 on, major)
+
+[changelog]
+header = ""
+# One "### Group" section per commit type, newest first.
+body = """
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | upper_first }}
+{% for commit in commits %}\
+- {{ commit.message | split(pat="\n") | first | trim | upper_first }}{% if commit.breaking %} — **BREAKING**{% endif %}
+{% endfor %}\
+{% endfor %}
+"""
+footer = ""
+trim = true
+
+[git]
+conventional_commits = true
+# Keep non-conventional commits too (the initial squash commit, etc.) so the first
+# release notes aren't empty; they land in "Other".
+filter_unconventional = false
+protect_breaking_commits = true
+tag_pattern = "v[0-9]*"
+commit_parsers = [
+  { message = "^feat", group = "Features" },
+  { message = "^fix", group = "Bug Fixes" },
+  { message = "^perf", group = "Performance" },
+  { message = "^refactor", group = "Refactoring" },
+  { message = "^docs?", group = "Documentation" },
+  { message = "^test", group = "Tests" },
+  { message = "^ci", group = "CI/CD" },
+  { message = "^build", group = "Build" },
+  { message = "^chore\\(release\\):", skip = true },
+  { message = "^chore", group = "Miscellaneous" },
+  { message = "^revert", group = "Reverts" },
+  { message = ".*", group = "Other" },
+]

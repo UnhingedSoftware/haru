@@ -1,0 +1,194 @@
+name: Release
+# Produces a fully-populated DRAFT release to review and Publish. Kick off from
+# Actions -> Release -> Run workflow (optionally type a version; blank = auto
+# from Conventional Commits).
+#
+# It computes the version and changelog, gates on the full test suite, builds
+# the binary and creates the draft with it attached in one shot.
+#
+# Artifact: one standalone executable — download, chmod +x, run.
+#   haru-linux-x86_64
+#
+# No Windows or macOS artifact yet. The code is written to build there — only
+# haru-apply knows a platform — but neither is built or run in CI, and
+# shipping a binary nobody has started would be a guess.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag, e.g. v0.2.0. Blank = auto-detect from Conventional Commits."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # 1. Version + changelog, published as an artifact the release job reads.
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install git-cliff
+        uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff
+      - name: Compute version
+        id: version
+        run: |
+          set -euo pipefail
+          input="${{ inputs.version }}"
+          if [ -n "$input" ]; then
+            version="$input"; case "$version" in v*) ;; *) version="v$version" ;; esac
+          else
+            raw="$(git cliff --bumped-version 2>/dev/null || true)"
+            ver="${raw#v}"; if [ -z "$ver" ] || [ "$ver" = "0.0.0" ]; then ver="0.1.0"; fi
+            version="v$ver"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Release version: $version"
+      - name: Generate changelog
+        run: git cliff --unreleased --tag "${{ steps.version.outputs.version }}" --strip all -o RELEASE_NOTES.md
+      - name: Upload changelog
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: RELEASE_NOTES.md
+          if-no-files-found: error
+
+  # 2. Test gate: nothing ships from a tree with failing tests.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: haru
+      - uses: actions/checkout@v4
+        with:
+          repository: UnhingedSoftware/tapline
+          token: ${{ secrets.TAPLINE_TOKEN || github.token }}
+          path: tapline
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: haru
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libwayland-dev libxkbcommon-dev libxcb1-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev
+      - run: cargo test --workspace
+        working-directory: haru
+
+  # 3. The binary.
+  build:
+    needs: [prepare, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: haru
+      - uses: actions/checkout@v4
+        with:
+          repository: UnhingedSoftware/tapline
+          token: ${{ secrets.TAPLINE_TOKEN || github.token }}
+          path: tapline
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: haru
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libwayland-dev libxkbcommon-dev libxcb1-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev
+
+      - name: Set crate version
+        working-directory: haru
+        run: |
+          v="${{ needs.prepare.outputs.version }}"; v="${v#v}"
+          sed -i -E "0,/^version = \"[0-9]+\.[0-9]+\.[0-9]+\"/s//version = \"$v\"/" Cargo.toml
+
+      - run: cargo build --release -p haru
+        working-directory: haru
+
+      - name: Name the artifact
+        run: |
+          set -euo pipefail
+          cp haru/target/release/haru haru-linux-x86_64
+          chmod +x haru-linux-x86_64
+          ls -la haru-linux-x86_64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artifacts
+          path: haru-linux-x86_64
+          if-no-files-found: error
+
+  # 4. One draft, everything attached.
+  release:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      V: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+      - uses: actions/download-artifact@v4
+        with:
+          name: artifacts
+      - name: Create or update the draft
+        run: |
+          set -euo pipefail
+          files=haru-linux-x86_64
+          cat >> RELEASE_NOTES.md <<'EOF'
+
+          ## Downloads
+
+          | File | What it is |
+          | --- | --- |
+          | `haru-linux-x86_64` | the picker — `chmod +x`, run |
+
+          Browsing needs nothing. Installing needs a Steam account that owns
+          Wallpaper Engine, once: `tapline login --qr`. Applying and previewing
+          need kirie.
+
+          EOF
+          # API-only: there is no checkout in this job, so `create` is given an
+          # explicit target commit.
+          if gh release view "$V" >/dev/null 2>&1; then
+            echo "release $V exists — updating in place"
+            gh release edit "$V" --draft --title "$V" --notes-file RELEASE_NOTES.md
+            # Cleared by name first: a run cancelled mid-upload leaves a
+            # half-created asset, and the API then answers 400 for a fresh
+            # upload of that name rather than replacing it.
+            for f in $files; do
+              gh release delete-asset "$V" "$f" --yes 2>/dev/null || true
+            done
+            uploaded=0
+            for attempt in 1 2 3; do
+              if gh release upload "$V" $files --clobber; then uploaded=1; break; fi
+              echo "upload attempt $attempt failed; retrying in 20s"
+              sleep 20
+            done
+            [ "$uploaded" = 1 ] || { echo "::error::could not upload assets"; exit 1; }
+          else
+            echo "creating draft $V"
+            gh release create "$V" --draft --title "$V" --target "$GITHUB_SHA" \
+              --notes-file RELEASE_NOTES.md $files
+          fi
+          echo "Draft $V ready."
