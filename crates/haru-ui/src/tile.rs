@@ -15,6 +15,19 @@ pub fn columns_for(available: f32, min_tile: f32, spacing: f32) -> (usize, f32) 
     (columns as usize, width.max(min_tile))
 }
 
+pub fn rows_for(available: f32, tile_width: f32, spacing: f32) -> usize {
+    let row = tile_width + CAPTION + spacing;
+    if row <= 0.0 {
+        return 1;
+    }
+    let rows = ((available + spacing) / row).floor();
+    if rows.is_finite() && rows >= 1.0 {
+        rows as usize
+    } else {
+        1
+    }
+}
+
 pub fn show(
     ui: &mut egui::Ui,
     previews: &mut Previews,
@@ -126,6 +139,20 @@ mod tests {
                 "{available}: {columns} x {width} = {used}"
             );
         }
+    }
+
+    #[test]
+    fn rows_fill_the_height_they_are_given() {
+        let row = 200.0 + 40.0 + 10.0;
+        let three = row * 3.0 - 10.0;
+        assert_eq!(rows_for(three, 200.0, 10.0), 3);
+        assert_eq!(rows_for(three - 1.0, 200.0, 10.0), 2);
+    }
+
+    #[test]
+    fn a_short_window_still_asks_for_one_row() {
+        assert_eq!(rows_for(0.0, 200.0, 10.0), 1);
+        assert_eq!(rows_for(-50.0, 200.0, 10.0), 1);
     }
 
     #[test]

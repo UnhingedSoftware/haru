@@ -24,6 +24,10 @@ use tapline::{BrowsePage, BrowseResult, BrowseSort, TextTarget};
 
 const TILE: f32 = 168.0;
 
+const SETTLE: f64 = 0.35;
+
+const LANDING: f64 = 300.0;
+
 enum Status {
     Idle,
     Searching,
@@ -46,6 +50,10 @@ pub struct Browser {
     fetching: Option<RequestId>,
     installed: Vec<u64>,
     landed: Option<PathBuf>,
+    fit: bool,
+    settling: Option<(u32, f64)>,
+    subscribing: Option<u64>,
+    landing: Option<(u64, PathBuf, f64)>,
 }
 
 impl Browser {
@@ -54,16 +62,21 @@ impl Browser {
         Self::with_filters(Filters::new(), std::rc::Rc::new(Workshop::spawn()))
     }
 
-    pub fn reconfigure(&mut self, adult: bool, per_page: u32, infinite: bool) {
+    pub fn reconfigure(&mut self, adult: bool, per_page: u32, infinite: bool, fit: bool) {
         let same = self.filters.adult == adult
-            && self.filters.per_page == per_page
-            && self.infinite == infinite;
+            && self.infinite == infinite
+            && self.fit == fit
+            && (fit || self.filters.per_page == per_page);
         if same {
             return;
         }
         self.filters.adult = adult;
-        self.filters.per_page = per_page;
         self.infinite = infinite;
+        self.fit = fit;
+        if !fit {
+            self.filters.per_page = per_page;
+        }
+        self.settling = None;
         self.search();
     }
 
@@ -87,6 +100,10 @@ impl Browser {
             fetching: None,
             installed: Vec::new(),
             landed: None,
+            fit: true,
+            settling: None,
+            subscribing: None,
+            landing: None,
         }
     }
 
@@ -104,6 +121,7 @@ impl Browser {
 
     pub fn ui(&mut self, ctx: &egui::Context, previews: &mut Previews, sidebar: bool) {
         self.collect();
+        self.check_files(ctx);
 
         if self.awaiting.is_some() || self.fetching.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
@@ -179,15 +197,62 @@ impl Browser {
                     self.fetching = None;
                     self.downloading = None;
                     self.status = Status::Idle;
+                    self.wait_for_files();
                 }
                 Reply::Failed(why) => {
                     self.fetching = None;
                     self.downloading = None;
+                    self.subscribing = None;
                     self.status = Status::Failed(why);
                 }
                 _ => {}
             }
         }
+    }
+
+    fn wait_for_files(&mut self) {
+        let Some(id) = self.subscribing.take() else {
+            return;
+        };
+        let Some(root) = self.install_root.as_ref() else {
+            self.status = Status::Failed(
+                "Steam has it, but there is no Steam library set to look in — Settings".to_owned(),
+            );
+            return;
+        };
+        let dir = root.join(format!("steamapps/workshop/content/431960/{id}"));
+        self.landing = Some((id, dir, 0.0));
+    }
+
+    fn check_files(&mut self, ctx: &egui::Context) {
+        let Some((id, dir, since)) = self.landing.clone() else {
+            return;
+        };
+
+        let now = ctx.input(|input| input.time);
+        let since = if since <= 0.0 {
+            self.landing = Some((id, dir.clone(), now));
+            now
+        } else {
+            since
+        };
+
+        if dir.join("project.json").is_file() {
+            self.landing = None;
+            self.installed.push(id);
+            self.landed = Some(dir);
+            self.status = Status::Idle;
+            return;
+        }
+        if now - since > LANDING {
+            self.landing = None;
+            self.status = Status::Failed(
+                "Steam took the subscription but the files have not arrived — check its Downloads"
+                    .to_owned(),
+            );
+            return;
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(700));
     }
 
     fn search(&mut self) {
@@ -291,6 +356,31 @@ impl Browser {
                     .is_file()
             });
 
+        if self.subscribing == Some(id) {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(
+                    RichText::new("asking Steam to subscribe\u{2026}")
+                        .small()
+                        .color(theme::MUTED),
+                );
+            });
+            return;
+        }
+        if let Some((waiting, _, _)) = self.landing
+            && waiting == id
+        {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(
+                    RichText::new("Steam is downloading it\u{2026}")
+                        .small()
+                        .color(theme::MUTED),
+                );
+            });
+            return;
+        }
+
         match self.downloading {
             Some((downloading, done, total)) if downloading == id => {
                 let share = if total == 0 {
@@ -324,7 +414,7 @@ impl Browser {
                     .clicked()
                 {
                     if self.client {
-                        self.downloading = Some((id, 0, found.item.size));
+                        self.subscribing = Some(id);
                         self.fetching = Some(self.workshop.send(Request::SubscribeViaClient {
                             item: found.item.id,
                         }));
@@ -552,6 +642,8 @@ impl Browser {
         }
 
         let (columns, tile_width) = tile::columns_for(ui.available_width(), TILE, 8.0);
+        let rows = tile::rows_for(ui.available_height(), tile_width, 10.0);
+        self.fit_page(ui, columns.saturating_mul(rows));
 
         let hit_bottom = self.tiles(ui, previews, &items, columns, tile_width);
         if hit_bottom
@@ -561,6 +653,45 @@ impl Browser {
             self.filters.page = self.filters.page.saturating_add(1);
             self.run();
         }
+    }
+
+    fn fit_page(&mut self, ui: &egui::Ui, wanted: usize) {
+        if !self.fit {
+            return;
+        }
+
+        let wanted = u32::try_from(wanted)
+            .unwrap_or(tapline::MAX_PER_PAGE)
+            .clamp(1, tapline::MAX_PER_PAGE);
+        if wanted == self.filters.per_page {
+            self.settling = None;
+            return;
+        }
+
+        let now = ui.input(|input| input.time);
+        let since = match self.settling {
+            Some((held, at)) if held == wanted => at,
+            _ => {
+                self.settling = Some((wanted, now));
+                now
+            }
+        };
+        if now - since < SETTLE {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(120));
+            return;
+        }
+        if self.awaiting.is_some() {
+            return;
+        }
+
+        self.settling = None;
+        self.filters.per_page = wanted;
+        if self.infinite {
+            return;
+        }
+        self.filters.page = 1;
+        self.run();
     }
 
     fn detail(&mut self, ui: &mut egui::Ui, previews: &mut Previews, index: usize) {

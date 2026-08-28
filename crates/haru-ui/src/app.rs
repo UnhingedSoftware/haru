@@ -99,7 +99,12 @@ impl Haru {
         };
         let workshop = Rc::new(Workshop::spawn());
         let mut browser = Browser::with_filters(filters, Rc::clone(&workshop));
-        browser.reconfigure(config.adult, config.per_page, config.infinite_scroll);
+        browser.reconfigure(
+            config.adult,
+            config.per_page,
+            config.infinite_scroll,
+            config.fit_per_page,
+        );
         browser.set_install_root(config.install_root());
         let mut settings = Settings::default();
         settings.sync(&config);
@@ -284,6 +289,7 @@ impl Haru {
                 self.config.adult,
                 self.config.per_page,
                 self.config.infinite_scroll,
+                self.config.fit_per_page,
             );
             self.browser.set_install_root(self.config.install_root());
             self.scanned = false;

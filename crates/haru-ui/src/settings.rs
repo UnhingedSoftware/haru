@@ -350,15 +350,25 @@ impl Settings {
             .on_hover_text("Results continue instead of being paged. Numbered pages go away.")
             .changed();
         ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.label(if config.infinite_scroll {
-                "Results per batch"
-            } else {
-                "Results per page"
+        actions.changed |= ui
+            .checkbox(
+                &mut config.fit_per_page,
+                "Ask for as many as the grid holds",
+            )
+            .on_hover_text("A page fills the window: more on a wide one, fewer on a small one.")
+            .changed();
+        ui.add_space(6.0);
+        ui.add_enabled_ui(!config.fit_per_page, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(if config.infinite_scroll {
+                    "Results per batch"
+                } else {
+                    "Results per page"
+                });
+                actions.changed |= ui
+                    .add(egui::Slider::new(&mut config.per_page, 12..=100))
+                    .drag_stopped();
             });
-            actions.changed |= ui
-                .add(egui::Slider::new(&mut config.per_page, 12..=100))
-                .drag_stopped();
         });
 
         ui.add_space(18.0);
