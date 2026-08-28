@@ -65,10 +65,7 @@ const CJK_FONTS: [&str; 8] = [
 /// is designed in, and it stays first. The CJK face is only reached for glyphs
 /// nothing before it has.
 fn load_fonts(ctx: &egui::Context) {
-    let Some((path, bytes)) = CJK_FONTS
-        .iter()
-        .find_map(|path| std::fs::read(path).ok().map(|bytes| (*path, bytes)))
-    else {
+    let Some(bytes) = CJK_FONTS.iter().find_map(|path| std::fs::read(path).ok()) else {
         return;
     };
 
@@ -81,7 +78,6 @@ fn load_fonts(ctx: &egui::Context) {
     for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
         fonts.families.entry(family).or_default().push("cjk".to_owned());
     }
-    let _ = path;
     ctx.set_fonts(fonts);
 }
 
