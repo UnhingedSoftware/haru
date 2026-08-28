@@ -24,6 +24,14 @@ pub struct Config {
     pub per_page: u32,
     /// Extra Steam libraries to read, for a layout the probe does not know.
     pub extra_libraries: Vec<PathBuf>,
+    /// Which kirie build to fetch: `webkit` or `cef`. `None` until one is
+    /// chosen, which is also how a first run is recognised.
+    pub renderer_web: Option<String>,
+    /// Whether to offer installing a renderer when none is found.
+    ///
+    /// On until someone turns the offer down. A picker that asks the same
+    /// question at every start is one nobody reads.
+    pub offer_renderer: bool,
     /// Whether the browser keeps loading as it is scrolled.
     ///
     /// Off by default: numbered pages are where you can say "back to page 4",
@@ -40,6 +48,8 @@ impl Default for Config {
             adult: false,
             per_page: 24,
             extra_libraries: Vec::new(),
+            renderer_web: None,
+            offer_renderer: true,
             infinite_scroll: false,
         }
     }

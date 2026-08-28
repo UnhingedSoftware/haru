@@ -76,6 +76,8 @@ pub struct Haru {
     scanned: bool,
     /// The sign-in overlay, and what it knows.
     account: Account,
+    /// The offer to install a renderer, on a machine with none.
+    installer: crate::renderer::Installer,
     /// The connection everything Steam-shaped goes over.
     workshop: Rc<Workshop>,
     /// The request that asks who is signed in, while it is outstanding.
@@ -150,6 +152,18 @@ impl Haru {
             }
         }
 
+        // Offered on a machine that has never had a renderer, and only where
+        // one is published: browsing works without kirie, applying does not,
+        // and a picker that can never put anything up should say so on the way
+        // in rather than when the first wallpaper is clicked.
+        let mut installer = crate::renderer::Installer::new();
+        if config.offer_renderer
+            && haru_apply::install::supported()
+            && haru_apply::install::installed().is_none()
+        {
+            installer.offer();
+        }
+
         Self {
             tab,
             previews: Previews::new(),
@@ -162,6 +176,7 @@ impl Haru {
             scanned: false,
             sidebar: true,
             account: Account::new(),
+            installer,
             workshop,
             asked_who: false,
             who_request: None,
@@ -229,20 +244,23 @@ impl Haru {
             }
             Tab::Preview => self.preview.ui(ctx, self.sidebar),
             Tab::Settings => {
-                let (changed, sign_in, sign_out) = self.settings.ui(
+                let asked = self.settings.ui(
                     ctx,
                     &mut self.config,
                     self.backend.as_deref(),
                     self.account.who(),
                     self.account.has_client(),
                 );
-                if sign_in {
+                if asked.sign_in {
                     self.account.open();
                 }
-                if sign_out {
+                if asked.install {
+                    self.installer.offer();
+                }
+                if asked.sign_out {
                     self.sign_out_request = Some(self.workshop.send(Request::SignOut));
                 }
-                if changed {
+                if asked.changed {
                     // A changed socket means a different renderer, and a
                     // changed library means a different set of wallpapers.
                     self.backend = haru_apply::detect(self.config.socket.clone());
@@ -257,9 +275,23 @@ impl Haru {
             }
         }
 
-        // Everything the frame did not draw is dropped here.
-        // Last, so it sits over whatever was drawn.
-        if self.account.ui(ctx) {
+        // Last, so they sit over whatever was drawn. One at a time: two
+        // modals over each other is a window nobody can answer.
+        match self.installer.ui(ctx) {
+            crate::renderer::Outcome::Installed(web) => {
+                self.config.renderer_web = Some(web.key().to_owned());
+                let _ = self.config.save();
+                // It is on disk now; whether it is *running* is another
+                // question, and the answer is the one the backend probes for.
+                self.backend = haru_apply::detect(self.config.socket.clone());
+            }
+            crate::renderer::Outcome::Dismissed => {
+                self.config.offer_renderer = false;
+                let _ = self.config.save();
+            }
+            crate::renderer::Outcome::Nothing => {}
+        }
+        if !self.installer.is_open() && self.account.ui(ctx) {
             self.sign_in_request = Some(self.workshop.send(Request::SignIn));
         }
 

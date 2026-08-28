@@ -14,6 +14,7 @@ mod app;
 mod icons;
 mod library;
 mod preview;
+mod renderer;
 mod settings;
 pub mod theme;
 mod tile;

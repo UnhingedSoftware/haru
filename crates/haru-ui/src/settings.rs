@@ -10,6 +10,19 @@ use haru_core::Config;
 
 use crate::theme;
 
+/// What the settings pane was asked for while it was drawn.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Actions {
+    /// Whether a setting changed and the config wants saving.
+    pub changed: bool,
+    /// Whether to open the sign-in overlay.
+    pub sign_in: bool,
+    /// Whether to forget the saved login.
+    pub sign_out: bool,
+    /// Whether to offer installing a renderer.
+    pub install: bool,
+}
+
 /// The settings pane.
 #[derive(Default)]
 pub struct Settings {
@@ -38,7 +51,7 @@ impl Settings {
             .unwrap_or_default();
     }
 
-    /// Draws the pane. Returns whether the config changed.
+    /// Draws the pane and reports what was asked of it.
     pub fn ui(
         &mut self,
         ctx: &egui::Context,
@@ -46,10 +59,8 @@ impl Settings {
         backend: Option<&dyn Backend>,
         signed_in: Option<&str>,
         client: bool,
-    ) -> (bool, bool, bool) {
-        let mut changed = false;
-        let mut sign_in = false;
-        let mut sign_out = false;
+    ) -> Actions {
+        let mut actions = Actions::default();
 
         egui::CentralPanel::default()
             .frame(theme::panel_frame(theme::Side::Middle))
@@ -86,7 +97,7 @@ impl Settings {
                         ui.add_space(6.0);
                         ui.horizontal(|ui| {
                             if ui.button(if signed_in.is_some() { "Sign in again…" } else { "Sign in…" }).clicked() {
-                                sign_in = true;
+                                actions.sign_in = true;
                             }
                             // Only offered when there is something to forget.
                             // tapline keeps the login; this asks it to stop.
@@ -96,7 +107,7 @@ impl Settings {
                                     .on_hover_text("Forgets the saved login on this machine")
                                     .clicked()
                             {
-                                sign_out = true;
+                                actions.sign_out = true;
                             }
                         });
 
@@ -116,6 +127,15 @@ impl Settings {
                                         .color(theme::MUTED),
                                 );
                             }
+                            None if haru_apply::install::installed().is_some() => {
+                                ui.label(
+                                    RichText::new(
+                                        "kirie is installed but not running. Wallpapers can be \
+                                         browsed and installed meanwhile.",
+                                    )
+                                    .color(theme::MUTED),
+                                );
+                            }
                             None => {
                                 ui.label(
                                     RichText::new(
@@ -123,6 +143,19 @@ impl Settings {
                                     )
                                     .color(theme::MUTED),
                                 );
+                                if haru_apply::install::supported() {
+                                    ui.add_space(6.0);
+                                    if ui
+                                        .button("Install kirie…")
+                                        .on_hover_text(
+                                            "Fetches the latest release from GitHub into \
+                                             ~/.local/bin",
+                                        )
+                                        .clicked()
+                                    {
+                                        actions.install = true;
+                                    }
+                                }
                             }
                         }
 
@@ -141,7 +174,7 @@ impl Settings {
                             .lost_focus()
                         {
                             config.socket = path_or_none(&self.socket);
-                            changed = true;
+                            actions.changed = true;
                         }
 
                         ui.add_space(18.0);
@@ -163,7 +196,7 @@ impl Settings {
                             .lost_focus()
                         {
                             config.install_dir = path_or_none(&self.install);
-                            changed = true;
+                            actions.changed = true;
                         }
 
                         ui.add_space(18.0);
@@ -179,7 +212,7 @@ impl Settings {
                                 );
                                 if extra && ui.small_button("Remove").clicked() {
                                     config.extra_libraries.retain(|other| other != &root);
-                                    changed = true;
+                                    actions.changed = true;
                                 }
                             });
                         }
@@ -195,18 +228,18 @@ impl Settings {
                             {
                                 config.extra_libraries.push(path);
                                 self.library.clear();
-                                changed = true;
+                                actions.changed = true;
                             }
                         });
 
                         ui.add_space(18.0);
                         ui.label(RichText::new("Browsing").strong());
                         ui.add_space(4.0);
-                        changed |= ui
+                        actions.changed |= ui
                             .checkbox(&mut config.adult, "Show adult content")
                             .changed();
                         ui.add_space(6.0);
-                        changed |= ui
+                        actions.changed |= ui
                             .checkbox(
                                 &mut config.infinite_scroll,
                                 "Keep loading as I scroll",
@@ -222,7 +255,7 @@ impl Settings {
                             } else {
                                 "Results per page"
                             });
-                            changed |= ui
+                            actions.changed |= ui
                                 .add(egui::Slider::new(&mut config.per_page, 12..=100))
                                 .drag_stopped();
                         });
@@ -252,7 +285,7 @@ impl Settings {
                     });
             });
 
-        (changed, sign_in, sign_out)
+        actions
     }
 }
 
