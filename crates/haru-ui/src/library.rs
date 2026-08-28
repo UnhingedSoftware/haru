@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use egui::{Align, Layout, RichText, Rounding, Sense, Stroke, Vec2};
-use haru_apply::{Backend, Screen};
+use haru_apply::{Engine, Screen};
 use haru_core::{Config, Installed, human_size, library, overrides, properties};
 use haru_media::Previews;
 use haru_workshop::{Reply, Request, Workshop};
@@ -116,11 +116,9 @@ impl Library {
         self.target = Some(screen);
     }
 
-    pub fn refresh(&mut self, config: &Config, backend: Option<&dyn Backend>) {
+    pub fn refresh(&mut self, config: &Config, engine: &Engine) {
         self.items = library::scan(&config.libraries());
-        let live: Vec<Screen> = backend
-            .map(|backend| backend.screens().unwrap_or_default())
-            .unwrap_or_default();
+        let live: Vec<Screen> = engine.snapshot().screens;
         self.owned = live.iter().map(|screen| screen.name.clone()).collect();
 
         self.screens = live;
@@ -143,7 +141,7 @@ impl Library {
         ctx: &egui::Context,
         previews: &mut Previews,
         config: &Config,
-        backend: Option<&dyn Backend>,
+        engine: &Engine,
         sidebar: bool,
     ) {
         self.collect();
@@ -156,7 +154,7 @@ impl Library {
                 .resizable(false)
                 .exact_width(238.0)
                 .frame(theme::panel_frame(theme::Side::Left))
-                .show(ctx, |ui| self.sidebar(ui, config, backend));
+                .show(ctx, |ui| self.sidebar(ui, config, engine));
         }
 
         if let Some(index) = self.selected {
@@ -164,7 +162,7 @@ impl Library {
                 .resizable(false)
                 .exact_width(312.0)
                 .frame(theme::panel_frame(theme::Side::Right))
-                .show(ctx, |ui| self.detail(ui, previews, index, backend));
+                .show(ctx, |ui| self.detail(ui, previews, index, engine));
         }
 
         egui::TopBottomPanel::bottom("library-status")
@@ -186,16 +184,16 @@ impl Library {
 
         egui::CentralPanel::default()
             .frame(theme::panel_frame(theme::Side::Middle))
-            .show(ctx, |ui| self.grid(ui, previews, backend));
+            .show(ctx, |ui| self.grid(ui, previews, engine));
     }
 
-    fn sidebar(&mut self, ui: &mut egui::Ui, config: &Config, backend: Option<&dyn Backend>) {
+    fn sidebar(&mut self, ui: &mut egui::Ui, config: &Config, engine: &Engine) {
         ui.heading("Library");
         ui.label(
-            RichText::new(match (self.screens.is_empty(), backend) {
-                (false, _) => "Click a wallpaper to put it up".to_owned(),
-                (true, Some(backend)) => format!("{} is not running", backend.name()),
-                (true, None) => "No renderer found".to_owned(),
+            RichText::new(if self.screens.is_empty() {
+                "No renderer found"
+            } else {
+                "Click a wallpaper to put it up"
             })
             .small()
             .color(theme::MUTED),
@@ -222,12 +220,12 @@ impl Library {
 
         ui.add_space(10.0);
         if ui.button("Rescan").clicked() {
-            self.refresh(config, backend);
+            self.refresh(config, engine);
             self.status = "rescanned".to_owned();
         }
     }
 
-    fn grid(&mut self, ui: &mut egui::Ui, previews: &mut Previews, backend: Option<&dyn Backend>) {
+    fn grid(&mut self, ui: &mut egui::Ui, previews: &mut Previews, engine: &Engine) {
         let shown = self.shown();
 
         if shown.is_empty() {
@@ -273,7 +271,7 @@ impl Library {
             });
 
         if let Some((screen, dir)) = apply {
-            self.apply(&screen, &dir, backend);
+            self.apply(&screen, &dir, engine);
         }
     }
 
@@ -282,7 +280,7 @@ impl Library {
         ui: &mut egui::Ui,
         previews: &mut Previews,
         index: usize,
-        backend: Option<&dyn Backend>,
+        engine: &Engine,
     ) {
         let Some(item) = self.items.get(index).cloned() else {
             self.selected = None;
@@ -379,7 +377,7 @@ impl Library {
                 ui.add_space(12.0);
                 ui.separator();
                 ui.add_space(6.0);
-                self.properties_of(ui, &item, backend);
+                self.properties_of(ui, &item, engine);
             });
     }
 
@@ -403,7 +401,7 @@ impl Library {
         };
     }
 
-    pub fn apply_to_target(&mut self, dir: &std::path::Path, backend: Option<&dyn Backend>) {
+    pub fn apply_to_target(&mut self, dir: &std::path::Path, engine: &Engine) {
         let Some(screen) = self
             .target
             .clone()
@@ -412,7 +410,7 @@ impl Library {
             self.status = "no screen to apply to".to_owned();
             return;
         };
-        self.apply(&screen, dir, backend);
+        self.apply(&screen, dir, engine);
     }
 
     pub fn take_applied(&mut self) -> Option<(String, PathBuf)> {
@@ -431,7 +429,7 @@ impl Library {
         &mut self,
         ui: &mut egui::Ui,
         item: &Installed,
-        backend: Option<&dyn Backend>,
+        engine: &Engine,
     ) {
         let live = self
             .screens
@@ -494,12 +492,12 @@ impl Library {
             return;
         }
 
-        self.status = match (backend, screen) {
-            (Some(backend), Some(screen)) => match backend.set_property(&screen, &key, &value) {
-                Ok(()) => format!("{key} = {value}"),
-                Err(why) => why,
-            },
-            _ => "no renderer to change it with".to_owned(),
+        self.status = match screen {
+            Some(screen) => {
+                engine.property(&screen, &key, &value);
+                format!("{key} = {value}")
+            }
+            None => "no screen to change it on".to_owned(),
         };
     }
 
@@ -520,32 +518,29 @@ impl Library {
         self.settings_for = Some(item.dir.clone());
     }
 
-    fn apply(&mut self, screen: &str, dir: &std::path::Path, backend: Option<&dyn Backend>) {
-        let owns = self.owned.iter().any(|name| name == screen);
-        let Some(backend) = backend.filter(|_| owns) else {
+    fn apply(&mut self, screen: &str, dir: &std::path::Path, engine: &Engine) {
+        if !self.owned.iter().any(|name| name == screen) {
             self.pending = Some((screen.to_owned(), dir.to_owned()));
             return;
-        };
-
-        if let Some(item) = self.items.iter().find(|item| item.dir == dir) {
-            for (key, value) in overrides::read(&item.id) {
-                let _ = backend.stage(&key, &value);
-            }
         }
-        self.status = match backend.apply(screen, dir) {
-            Ok(()) => {
-                if let Some(found) = self
-                    .screens
-                    .iter_mut()
-                    .find(|candidate| candidate.name == screen)
-                {
-                    found.current = Some(dir.to_owned());
-                }
-                self.applied = Some((screen.to_owned(), dir.to_owned()));
-                format!("applied to {screen}")
-            }
-            Err(why) => why,
-        };
+
+        let staged = self
+            .items
+            .iter()
+            .find(|item| item.dir == dir)
+            .map(|item| overrides::read(&item.id).into_iter().collect())
+            .unwrap_or_default();
+
+        engine.apply(screen, dir, staged);
+        if let Some(found) = self
+            .screens
+            .iter_mut()
+            .find(|candidate| candidate.name == screen)
+        {
+            found.current = Some(dir.to_owned());
+        }
+        self.applied = Some((screen.to_owned(), dir.to_owned()));
+        self.status = format!("applying to {screen}\u{2026}");
     }
 
     fn shown(&self) -> Vec<(usize, Installed)> {
@@ -720,7 +715,8 @@ mod tests {
     #[test]
     fn applying_with_no_renderer_asks_for_one_to_be_started() {
         let mut library = library();
-        library.apply("DP-1", std::path::Path::new("/tmp/1"), None);
+        let engine = haru_apply::Engine::spawn(Some(PathBuf::from("/nonexistent/haru.sock")));
+        library.apply("DP-1", std::path::Path::new("/tmp/1"), &engine);
         assert_eq!(
             library.take_pending(),
             Some(("DP-1".to_owned(), PathBuf::from("/tmp/1")))

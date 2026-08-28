@@ -1,5 +1,5 @@
 use egui::RichText;
-use haru_apply::Backend;
+use haru_apply::{Engine, Snapshot};
 use haru_core::Config;
 
 use crate::theme;
@@ -46,7 +46,7 @@ impl Settings {
         &mut self,
         ctx: &egui::Context,
         config: &mut Config,
-        backend: Option<&dyn Backend>,
+        engine: &Engine,
         signed_in: Option<&str>,
         client: bool,
     ) -> Actions {
@@ -64,7 +64,7 @@ impl Settings {
 
                         self.steam(ui, signed_in, client, &mut actions);
                         ui.add_space(18.0);
-                        self.renderer(ui, config, backend, &mut actions);
+                        self.renderer(ui, config, &engine.snapshot(), &mut actions);
                         ui.add_space(18.0);
                         self.installing(ui, config, &mut actions);
                         ui.add_space(18.0);
@@ -131,17 +131,14 @@ impl Settings {
         &mut self,
         ui: &mut egui::Ui,
         config: &mut Config,
-        backend: Option<&dyn Backend>,
+        engine: &Snapshot,
         actions: &mut Actions,
     ) {
         ui.label(RichText::new("Renderer").strong());
         ui.add_space(4.0);
 
-        let engine = haru_apply::launch::pid();
-        let answering = backend.is_some_and(Backend::available);
-
-        match (answering, engine) {
-            (true, _) => Self::running(ui, backend, engine, actions),
+        match (engine.available, engine.pid) {
+            (true, _) => Self::running(ui, engine, actions),
             (false, Some(pid)) => {
                 ui.label(
                     RichText::new(format!("kirie is running as pid {pid} but not answering"))
@@ -155,7 +152,7 @@ impl Settings {
                     actions.renderer = Some(Renderer::Stop);
                 }
             }
-            (false, None) if haru_apply::install::installed().is_some() => {
+            (false, None) if engine.binary.is_some() => {
                 ui.label(
                     RichText::new(
                         "kirie is installed but not running. Wallpapers can be \
@@ -219,22 +216,20 @@ impl Settings {
         ui.add_space(18.0);
     }
 
-    fn running(
-        ui: &mut egui::Ui,
-        backend: Option<&dyn Backend>,
-        engine: Option<u32>,
-        actions: &mut Actions,
-    ) {
-        let name = backend.map_or("The renderer", Backend::name);
+    fn running(ui: &mut egui::Ui, engine: &Snapshot, actions: &mut Actions) {
         ui.label(
-            RichText::new(match engine {
-                Some(pid) => format!("{name} is running · pid {pid}"),
-                None => format!("{name} is running"),
+            RichText::new(match engine.pid {
+                Some(pid) => format!("kirie is running · pid {pid}"),
+                None => "kirie is running".to_owned(),
             })
             .color(theme::ACCENT),
         );
-        if let Some(Ok(screens)) = backend.map(Backend::screens) {
-            let names: Vec<&str> = screens.iter().map(|screen| screen.name.as_str()).collect();
+        {
+            let names: Vec<&str> = engine
+                .screens
+                .iter()
+                .map(|screen| screen.name.as_str())
+                .collect();
             if !names.is_empty() {
                 ui.add_space(2.0);
                 ui.label(
@@ -256,7 +251,7 @@ impl Settings {
             {
                 actions.renderer = Some(Renderer::Restart);
             }
-            if engine.is_some() {
+            if engine.pid.is_some() {
                 if ui
                     .button(RichText::new("Stop").color(theme::DANGER))
                     .on_hover_text("Leaves every screen without a wallpaper")

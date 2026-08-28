@@ -1,11 +1,13 @@
 use std::path::{Path, PathBuf};
 
+pub mod engine;
 pub mod install;
 mod kirie;
 pub mod launch;
 mod offscreen;
 mod stream;
 
+pub use engine::{Engine, Snapshot};
 pub use kirie::Kirie;
 pub use offscreen::Offscreen;
 pub use stream::{Frame, Preview as PreviewStream};

@@ -1,5 +1,5 @@
 use egui::RichText;
-use haru_apply::Backend;
+use haru_apply::Engine;
 use haru_core::{Config, Filters};
 use haru_media::Previews;
 
@@ -42,12 +42,6 @@ impl Tab {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Job {
-    Start,
-    Stop,
-}
-
 pub struct Haru {
     tab: Tab,
     previews: Previews,
@@ -56,11 +50,10 @@ pub struct Haru {
     preview: Preview,
     settings: Settings,
     config: Config,
-    backend: Option<Box<dyn Backend>>,
+    engine: Engine,
     scanned: bool,
     account: Account,
     installer: crate::renderer::Installer,
-    starting: Option<(Job, std::sync::mpsc::Receiver<Result<(), String>>)>,
     workshop: Rc<Workshop>,
     who_request: Option<haru_workshop::RequestId>,
     sign_in_request: Option<haru_workshop::RequestId>,
@@ -89,7 +82,7 @@ impl Haru {
     #[must_use]
     pub fn opening_on_item(tab: Tab, search: Option<String>, item: Option<String>) -> Self {
         let config = Config::load();
-        let backend = haru_apply::detect(config.socket.clone());
+        let engine = Engine::spawn(config.socket.clone());
 
         let filters = Filters {
             adult: config.adult,
@@ -135,12 +128,11 @@ impl Haru {
             preview,
             settings,
             config,
-            backend,
+            engine,
             scanned: false,
             sidebar: true,
             account: Account::new(),
             installer,
-            starting: None,
             workshop,
             asked_who: false,
             who_request: None,
@@ -164,7 +156,7 @@ impl Haru {
                     ctx,
                     &mut self.previews,
                     &self.config,
-                    self.backend.as_deref(),
+                    &self.engine,
                     self.sidebar,
                 );
             }
@@ -173,13 +165,13 @@ impl Haru {
         }
 
         if let Some((screen, dir)) = self.library.take_pending() {
-            self.start_renderer(ctx, &screen, &dir);
+            self.start_renderer(&screen, &dir);
         }
         if let Some((screen, dir)) = self.library.take_applied() {
             self.config.screens.insert(screen, dir);
             let _ = self.config.save();
         }
-        self.collect_renderer(ctx);
+        self.engine_notes(ctx);
 
         self.overlays(ctx);
 
@@ -218,7 +210,7 @@ impl Haru {
 
     fn before_drawing(&mut self, ctx: &egui::Context) {
         if !self.scanned {
-            self.library.refresh(&self.config, self.backend.as_deref());
+            self.library.refresh(&self.config, &self.engine);
             self.scanned = true;
         }
 
@@ -241,7 +233,7 @@ impl Haru {
             crate::renderer::Outcome::Installed(web) => {
                 self.config.renderer_web = Some(web.key().to_owned());
                 let _ = self.config.save();
-                self.backend = haru_apply::detect(self.config.socket.clone());
+                self.engine = Engine::spawn(self.config.socket.clone());
             }
             crate::renderer::Outcome::Dismissed => {
                 self.config.offer_renderer = false;
@@ -257,8 +249,8 @@ impl Haru {
     fn workshop_tab(&mut self, ctx: &egui::Context) {
         self.browser.ui(ctx, &mut self.previews, self.sidebar);
         if let Some(dir) = self.browser.take_landed() {
-            self.library.refresh(&self.config, self.backend.as_deref());
-            self.library.apply_to_target(&dir, self.backend.as_deref());
+            self.library.refresh(&self.config, &self.engine);
+            self.library.apply_to_target(&dir, &self.engine);
             self.scanned = true;
         }
     }
@@ -267,7 +259,7 @@ impl Haru {
         let asked = self.settings.ui(
             ctx,
             &mut self.config,
-            self.backend.as_deref(),
+            &self.engine,
             self.account.who(),
             self.account.has_client(),
         );
@@ -278,13 +270,13 @@ impl Haru {
             self.installer.offer();
         }
         if let Some(what) = asked.renderer {
-            self.manage_renderer(ctx, what);
+            self.manage_renderer(what);
         }
         if asked.sign_out {
             self.sign_out_request = Some(self.workshop.send(Request::SignOut));
         }
         if asked.changed {
-            self.backend = haru_apply::detect(self.config.socket.clone());
+            self.engine = Engine::spawn(self.config.socket.clone());
             self.browser.reconfigure(
                 self.config.adult,
                 self.config.per_page,
@@ -300,14 +292,10 @@ impl Haru {
         let mut names: Vec<String> = Vec::new();
         let mut showing: Vec<(String, std::path::PathBuf)> = Vec::new();
 
-        if let Some(backend) = self.backend.as_deref()
-            && let Ok(live) = backend.screens()
-        {
-            for found in live {
-                names.push(found.name.clone());
-                if let Some(current) = found.current {
-                    showing.push((found.name, current));
-                }
+        for found in self.engine.snapshot().screens {
+            names.push(found.name.clone());
+            if let Some(current) = found.current {
+                showing.push((found.name, current));
             }
         }
         for name in haru_apply::launch::connectors() {
@@ -339,53 +327,27 @@ impl Haru {
             .collect()
     }
 
-    fn start_renderer(&mut self, ctx: &egui::Context, screen: &str, dir: &std::path::Path) {
-        if self.starting.is_some() {
-            return;
-        }
-
-        let Some(binary) = haru_apply::install::installed() else {
+    fn start_renderer(&mut self, screen: &str, dir: &std::path::Path) {
+        if self.engine.snapshot().binary.is_none() {
             self.library.say("no renderer installed yet");
             self.installer.offer();
             return;
-        };
-        let socket = haru_apply::Kirie::new(self.config.socket.clone())
-            .socket()
-            .to_path_buf();
-
-        let plan = self.plan_for(screen, dir);
-        let replacing = haru_apply::launch::running();
-        let (answer, heard) = std::sync::mpsc::channel();
-        let ctx = ctx.clone();
-        let spawned = std::thread::Builder::new()
-            .name("haru-start-renderer".to_owned())
-            .spawn(move || {
-                let outcome = if replacing {
-                    haru_apply::launch::restart(&binary, &socket, &plan)
-                } else {
-                    haru_apply::launch::start(&binary, &socket, &plan)
-                };
-                let _ = answer.send(outcome);
-                ctx.request_repaint();
-            });
-
-        if spawned.is_ok() {
-            self.starting = Some((Job::Start, heard));
-            self.config
-                .screens
-                .insert(screen.to_owned(), dir.to_owned());
-            let _ = self.config.save();
-            self.library.say(if replacing {
-                "restarting the renderer for that screen\u{2026}"
-            } else {
-                "starting the renderer\u{2026}"
-            });
-        } else {
-            self.library.say("could not start the renderer");
         }
+
+        let replacing = self.engine.snapshot().pid.is_some();
+        self.engine.start(self.plan_for(screen, dir));
+        self.config
+            .screens
+            .insert(screen.to_owned(), dir.to_owned());
+        let _ = self.config.save();
+        self.library.say(if replacing {
+            "restarting the renderer for that screen\u{2026}"
+        } else {
+            "starting the renderer\u{2026}"
+        });
     }
 
-    fn manage_renderer(&mut self, ctx: &egui::Context, asked: crate::settings::Renderer) {
+    fn manage_renderer(&mut self, asked: crate::settings::Renderer) {
         use crate::settings::Renderer;
 
         match asked {
@@ -397,60 +359,29 @@ impl Haru {
                     .find(|(_, wallpaper)| wallpaper.is_dir())
                     .map(|(screen, wallpaper)| (screen.clone(), wallpaper.clone()));
                 match last {
-                    Some((screen, wallpaper)) => self.start_renderer(ctx, &screen, &wallpaper),
+                    Some((screen, wallpaper)) => self.start_renderer(&screen, &wallpaper),
                     None => self
                         .library
                         .say("pick a wallpaper — an engine cannot start without one"),
                 }
             }
-            Renderer::Stop => self.stop_renderer(ctx),
+            Renderer::Stop => {
+                self.engine.stop();
+                self.library.say("stopping the renderer\u{2026}");
+            }
         }
     }
 
-    fn stop_renderer(&mut self, ctx: &egui::Context) {
-        if self.starting.is_some() {
-            return;
+    fn engine_notes(&mut self, ctx: &egui::Context) {
+        while let Some(note) = self.engine.take_note() {
+            match note {
+                Ok(said) => self.library.say(said),
+                Err(why) => self.library.say(why),
+            }
+            self.scanned = false;
         }
-        let (answer, heard) = std::sync::mpsc::channel();
-        let ctx = ctx.clone();
-        let spawned = std::thread::Builder::new()
-            .name("haru-stop-renderer".to_owned())
-            .spawn(move || {
-                let _ = answer.send(haru_apply::launch::stop());
-                ctx.request_repaint();
-            });
-        if spawned.is_ok() {
-            self.starting = Some((Job::Stop, heard));
-            self.library.say("stopping the renderer\u{2026}");
-        }
-    }
-
-    fn collect_renderer(&mut self, ctx: &egui::Context) {
-        let Some((job, heard)) = self.starting.as_ref() else {
-            return;
-        };
-        let job = *job;
-        match heard.try_recv() {
-            Ok(Ok(())) => {
-                self.starting = None;
-                self.backend = haru_apply::detect(self.config.socket.clone());
-                self.library.refresh(&self.config, self.backend.as_deref());
-                self.library.say(match job {
-                    Job::Start => "the renderer is up",
-                    Job::Stop => "the renderer is stopped",
-                });
-            }
-            Ok(Err(why)) => {
-                self.starting = None;
-                self.library.say(why);
-            }
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.starting = None;
-                self.library.say("the renderer stopped without answering");
-            }
-            Err(std::sync::mpsc::TryRecvError::Empty) => {
-                ctx.request_repaint_after(std::time::Duration::from_millis(200));
-            }
+        if self.engine.snapshot().working {
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
         }
     }
 
