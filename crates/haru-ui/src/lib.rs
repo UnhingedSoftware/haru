@@ -464,7 +464,15 @@ impl Browser {
             .show(ui, |ui| {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    ui.heading(plain_text(&found.item.title));
+                    // Truncated: a Workshop title runs as long as its author
+                    // liked, and the pane is 300 pixels wide.
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(plain_text(&found.item.title)).size(16.0).strong(),
+                        )
+                        .truncate(),
+                    )
+                    .on_hover_text(plain_text(&found.item.title));
                     ui.with_layout(Layout::right_to_left(Align::TOP), |ui| {
                         if ui.small_button("✕").clicked() {
                             self.selected = None;
@@ -529,7 +537,7 @@ impl Browser {
                         if ui
                             .add_sized(
                                 [ui.available_width(), 30.0],
-                                egui::Button::new("Download and apply"),
+                                egui::Button::new("Download"),
                             )
                             .clicked()
                         {
