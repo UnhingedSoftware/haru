@@ -373,6 +373,80 @@ async fn install(
 }
 
 /// The worker: one runtime, one session, requests in order.
+/// What can be answered without a Steam connection.
+///
+/// Returns `None` when the request needs one. Both of these used to be handled
+/// inside the session block, which meant a slow handshake left the account
+/// state unresolved for as long as it took — for questions a file and a
+/// process could answer on their own.
+fn offline(request: &Request, session: &mut Option<Session>) -> Option<Reply> {
+    match request {
+        Request::WhoAmI => Some(Reply::Account {
+            saved: saved_login(),
+            client: client_available(),
+        }),
+        // Forgetting a login is a file, and dropping the connection that used
+        // it is the other half — without that, this process would keep working
+        // as the account it was just told to forget.
+        Request::SignOut => Some(
+            match tapline_auth::TokenStore::default_file().forget_all() {
+                Ok(()) => {
+                    *session = None;
+                    Reply::SignedOut
+                }
+                Err(error) => Reply::Failed(error.to_string()),
+            },
+        ),
+        _ => None,
+    }
+}
+
+/// Everything that needs the connection, once there is one.
+async fn serve(
+    request: Request,
+    session: &mut Session,
+    replies: &Sender<(RequestId, Reply)>,
+    id: RequestId,
+) -> Reply {
+    match request {
+        Request::Browse(query) => match session.browse_workshop(&query).await {
+            Ok(page) => Reply::Page(Box::new(page)),
+            Err(error) => Reply::Failed(error.to_string()),
+        },
+        Request::Count(query) => match session.count_workshop(&query).await {
+            Ok(total) => Reply::Count(total),
+            Err(error) => Reply::Failed(error.to_string()),
+        },
+        Request::Install { item, into } => install(session, &item, &into, replies, id).await,
+        // Both are answered before the session; see above.
+        Request::WhoAmI | Request::SignOut => {
+            Reply::Failed("handled before the session".to_owned())
+        }
+        Request::SignIn => sign_in(session, replies, id).await,
+        Request::SubscribeViaClient { item } => match client() {
+            // Steam downloads it into its own library, which is where
+            // this looks anyway — no depot key, no login here.
+            Some(steam) => match steam.subscribe(item, CLIENT_PATIENCE) {
+                Ok(()) => Reply::Subscribed,
+                Err(error) => Reply::Failed(error.to_string()),
+            },
+            None => Reply::Failed("no running Steam client to ask".to_owned()),
+        },
+        Request::Unsubscribe { app, item } => {
+            match session.unsubscribe_workshop_item(app, item).await {
+                Ok(()) => Reply::Unsubscribed,
+                // Subscriptions belong to an account, so an anonymous
+                // session has none to change — worth saying plainly,
+                // because the files can still be removed.
+                Err(error) if error.needs_login() => Reply::Failed(
+                    "unsubscribing needs a signed-in account — run `tapline login --qr`".to_owned(),
+                ),
+                Err(error) => Reply::Failed(error.to_string()),
+            }
+        }
+    }
+}
+
 fn worker(requests: &Receiver<(RequestId, Request)>, replies: &Sender<(RequestId, Reply)>) {
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -393,32 +467,11 @@ fn worker(requests: &Receiver<(RequestId, Request)>, replies: &Sender<(RequestId
     let mut session: Option<Session> = None;
 
     while let Ok((id, request)) = requests.recv() {
-        // A file and a process check — no connection involved. Answering this
-        // through the session made the window wait on a CM handshake to find
-        // out whether a token file exists, and a slow one left the account
-        // state unresolved for as long as it took.
-        if matches!(request, Request::WhoAmI) {
-            let reply = Reply::Account {
-                saved: saved_login(),
-                client: client_available(),
-            };
-            if replies.send((id, reply)).is_err() {
-                return;
-            }
-            continue;
-        }
-
-        // Forgetting a login is a file, and dropping the connection that used
-        // it is the other half — without that, this process would keep working
-        // as the account it was just told to forget.
-        if matches!(request, Request::SignOut) {
-            let reply = match tapline_auth::TokenStore::default_file().forget_all() {
-                Ok(()) => {
-                    session = None;
-                    Reply::SignedOut
-                }
-                Err(error) => Reply::Failed(error.to_string()),
-            };
+        // Answered without a connection, and before one is opened: a token
+        // file and a process check need no Steam, and going through the
+        // session made the window wait on a CM handshake to find out whether a
+        // file exists.
+        if let Some(reply) = offline(&request, &mut session) {
             if replies.send((id, reply)).is_err() {
                 return;
             }
@@ -438,46 +491,7 @@ fn worker(requests: &Receiver<(RequestId, Request)>, replies: &Sender<(RequestId
                 return Reply::Failed("no session".to_owned());
             };
 
-            match request {
-                Request::Browse(query) => match session.browse_workshop(&query).await {
-                    Ok(page) => Reply::Page(Box::new(page)),
-                    Err(error) => Reply::Failed(error.to_string()),
-                },
-                Request::Count(query) => match session.count_workshop(&query).await {
-                    Ok(total) => Reply::Count(total),
-                    Err(error) => Reply::Failed(error.to_string()),
-                },
-                Request::Install { item, into } => {
-                    install(session, &item, &into, replies, id).await
-                }
-                // Both are answered before the session; see above.
-                Request::WhoAmI | Request::SignOut => {
-                    Reply::Failed("handled before the session".to_owned())
-                }
-                Request::SignIn => sign_in(session, replies, id).await,
-                Request::SubscribeViaClient { item } => match client() {
-                    // Steam downloads it into its own library, which is where
-                    // this looks anyway — no depot key, no login here.
-                    Some(steam) => match steam.subscribe(item, CLIENT_PATIENCE) {
-                        Ok(()) => Reply::Subscribed,
-                        Err(error) => Reply::Failed(error.to_string()),
-                    },
-                    None => Reply::Failed("no running Steam client to ask".to_owned()),
-                },
-                Request::Unsubscribe { app, item } => {
-                    match session.unsubscribe_workshop_item(app, item).await {
-                        Ok(()) => Reply::Unsubscribed,
-                        // Subscriptions belong to an account, so an anonymous
-                        // session has none to change — worth saying plainly,
-                        // because the files can still be removed.
-                        Err(error) if error.needs_login() => Reply::Failed(
-                            "unsubscribing needs a signed-in account — run `tapline login --qr`"
-                                .to_owned(),
-                        ),
-                        Err(error) => Reply::Failed(error.to_string()),
-                    }
-                }
-            }
+            serve(request, session, replies, id).await
         });
 
         // A dropped UI ends the worker; there is nobody left to answer.

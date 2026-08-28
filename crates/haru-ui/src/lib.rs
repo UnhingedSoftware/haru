@@ -289,35 +289,7 @@ impl Browser {
         ui.label(RichText::new("Wallpaper Engine Workshop").small().weak());
         ui.add_space(10.0);
 
-        let search = ui.add(
-            egui::TextEdit::singleline(&mut self.typed)
-                .hint_text("Search, then Enter")
-                .desired_width(f32::INFINITY),
-        );
-        if search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-            self.filters.text = self.typed.clone();
-            self.search();
-        }
-
-        if !self.typed.trim().is_empty() {
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                for (label, target) in [
-                    ("Anywhere", TextTarget::Everything),
-                    ("Title", TextTarget::Title),
-                    ("Body", TextTarget::Description),
-                ] {
-                    if ui
-                        .selectable_label(self.filters.search_in == target, label)
-                        .clicked()
-                    {
-                        self.filters.search_in = target;
-                        self.filters.text = self.typed.clone();
-                        self.search();
-                    }
-                }
-            });
-        }
+        self.search_box(ui);
 
         ui.add_space(10.0);
         ui.separator();
@@ -365,6 +337,140 @@ impl Browser {
         ui.label(RichText::new("Filters").small().weak());
         ui.add_space(4.0);
 
+        changed |= self.tag_groups(ui);
+
+        ui.add_space(6.0);
+        ui.separator();
+        ui.horizontal(|ui| {
+            changed |= ui.checkbox(&mut self.filters.adult, "18+").changed();
+            if ui.button("Clear").clicked() {
+                self.filters.clear();
+                self.typed.clear();
+                changed = true;
+            }
+        });
+
+        if changed {
+            self.search();
+        }
+    }
+
+    /// Getting this wallpaper: the button, the bar, or the news that it is
+    /// already here.
+    fn download_row(&mut self, ui: &mut egui::Ui, found: &BrowseResult) {
+        let id = found.item.id.get();
+        let on_disk = self.installed.contains(&id)
+            || self.install_root.as_ref().is_some_and(|root| {
+                root.join(format!("steamapps/workshop/content/431960/{id}"))
+                    .join("project.json")
+                    .is_file()
+            });
+
+        match self.downloading {
+            // This one, in flight.
+            Some((downloading, done, total)) if downloading == id => {
+                let share = if total == 0 {
+                    0.0
+                } else {
+                    #[expect(
+                        clippy::cast_precision_loss,
+                        reason = "a progress bar, not an accounting figure"
+                    )]
+                    let share = done as f32 / total as f32;
+                    share
+                };
+                ui.add(egui::ProgressBar::new(share).text(format!(
+                    "{} of {}",
+                    human_size(done),
+                    human_size(total)
+                )));
+            }
+            // Something else is downloading; one at a time, because the
+            // session behind it is one connection.
+            Some(_) => {
+                ui.add_enabled(
+                    false,
+                    egui::Button::new("Download").min_size(egui::vec2(ui.available_width(), 30.0)),
+                );
+            }
+            None if on_disk => {
+                ui.label(RichText::new("Already installed").color(theme::ACCENT));
+            }
+            None => {
+                if ui
+                    .add_sized([ui.available_width(), 30.0], egui::Button::new("Download"))
+                    .clicked()
+                {
+                    // A running client is the better route: it holds
+                    // the depot key, so nothing here needs a login, and
+                    // it downloads into the library this already reads.
+                    if self.client {
+                        self.downloading = Some((id, 0, found.item.size));
+                        self.fetching = Some(self.workshop.send(Request::SubscribeViaClient {
+                            item: found.item.id,
+                        }));
+                    } else {
+                        match self.install_root.clone() {
+                            Some(root) => {
+                                self.downloading = Some((id, 0, found.item.size));
+                                self.fetching = Some(self.workshop.send(Request::Install {
+                                    item: Box::new(found.item.clone()),
+                                    into: root,
+                                }));
+                            }
+                            None => {
+                                self.status = Status::Failed(
+                                    "no Steam library to install into — set one in Settings"
+                                        .to_owned(),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The search box, and where a search looks.
+    ///
+    /// Searching happens on Enter rather than per keystroke: every search is a
+    /// round trip to Steam, and one per letter is a query storm that answers
+    /// out of order.
+    fn search_box(&mut self, ui: &mut egui::Ui) {
+        let search = ui.add(
+            egui::TextEdit::singleline(&mut self.typed)
+                .hint_text("Search, then Enter")
+                .desired_width(f32::INFINITY),
+        );
+        if search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            self.filters.text = self.typed.clone();
+            self.search();
+        }
+
+        if !self.typed.trim().is_empty() {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                for (label, target) in [
+                    ("Anywhere", TextTarget::Everything),
+                    ("Title", TextTarget::Title),
+                    ("Body", TextTarget::Description),
+                ] {
+                    if ui
+                        .selectable_label(self.filters.search_in == target, label)
+                        .clicked()
+                    {
+                        self.filters.search_in = target;
+                        self.filters.text = self.typed.clone();
+                        self.search();
+                    }
+                }
+            });
+        }
+    }
+
+    /// The six filter axes. Returns whether one changed.
+    fn tag_groups(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut changed = false;
         egui::ScrollArea::vertical()
             .auto_shrink([false, true])
             .max_height((ui.available_height() - 64.0).max(120.0))
@@ -403,21 +509,7 @@ impl Browser {
                     ui.add_space(4.0);
                 }
             });
-
-        ui.add_space(6.0);
-        ui.separator();
-        ui.horizontal(|ui| {
-            changed |= ui.checkbox(&mut self.filters.adult, "18+").changed();
-            if ui.button("Clear").clicked() {
-                self.filters.clear();
-                self.typed.clear();
-                changed = true;
-            }
-        });
-
-        if changed {
-            self.search();
-        }
+        changed
     }
 
     /// The result grid.
@@ -551,80 +643,7 @@ impl Browser {
 
                 ui.add_space(10.0);
 
-                let id = found.item.id.get();
-                let on_disk = self.installed.contains(&id)
-                    || self.install_root.as_ref().is_some_and(|root| {
-                        root.join(format!("steamapps/workshop/content/431960/{id}"))
-                            .join("project.json")
-                            .is_file()
-                    });
-
-                match self.downloading {
-                    // This one, in flight.
-                    Some((downloading, done, total)) if downloading == id => {
-                        let share = if total == 0 {
-                            0.0
-                        } else {
-                            #[expect(
-                                clippy::cast_precision_loss,
-                                reason = "a progress bar, not an accounting figure"
-                            )]
-                            let share = done as f32 / total as f32;
-                            share
-                        };
-                        ui.add(egui::ProgressBar::new(share).text(format!(
-                            "{} of {}",
-                            human_size(done),
-                            human_size(total)
-                        )));
-                    }
-                    // Something else is downloading; one at a time, because the
-                    // session behind it is one connection.
-                    Some(_) => {
-                        ui.add_enabled(
-                            false,
-                            egui::Button::new("Download")
-                                .min_size(egui::vec2(ui.available_width(), 30.0)),
-                        );
-                    }
-                    None if on_disk => {
-                        ui.label(RichText::new("Already installed").color(theme::ACCENT));
-                    }
-                    None => {
-                        if ui
-                            .add_sized([ui.available_width(), 30.0], egui::Button::new("Download"))
-                            .clicked()
-                        {
-                            // A running client is the better route: it holds
-                            // the depot key, so nothing here needs a login, and
-                            // it downloads into the library this already reads.
-                            if self.client {
-                                self.downloading = Some((id, 0, found.item.size));
-                                self.fetching =
-                                    Some(self.workshop.send(Request::SubscribeViaClient {
-                                        item: found.item.id,
-                                    }));
-                            } else {
-                                match self.install_root.clone() {
-                                    Some(root) => {
-                                        self.downloading = Some((id, 0, found.item.size));
-                                        self.fetching =
-                                            Some(self.workshop.send(Request::Install {
-                                                item: Box::new(found.item.clone()),
-                                                into: root,
-                                            }));
-                                    }
-                                    None => {
-                                        self.status = Status::Failed(
-                                            "no Steam library to install into — set one in Settings"
-                                                .to_owned(),
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                self.download_row(ui, &found);
 
                 ui.add_space(10.0);
                 ui.label(RichText::new(human_size(found.item.size)).strong());

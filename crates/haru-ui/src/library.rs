@@ -282,172 +282,10 @@ impl Library {
             });
 
         ui.add_space(10.0);
-        ui.separator();
-        ui.add_space(6.0);
-        self.settings_panel(ui, backend);
-        ui.add_space(6.0);
-
-        ui.add_space(10.0);
         if ui.button("Rescan").clicked() {
             self.refresh(config, backend);
             self.status = "rescanned".to_owned();
         }
-    }
-
-    /// The settings of the wallpaper being looked at.
-    ///
-    /// Whatever is selected in the grid, or — with nothing selected — whatever
-    /// is on the chosen screen. Selecting is how you ask "what can this one
-    /// do", and answering with a different wallpaper's knobs would be worse
-    /// than answering with none.
-    ///
-    /// Where a change goes depends on whether that wallpaper is up. On the
-    /// screen: straight to the renderer, visible immediately. Not on it: kept
-    /// against the wallpaper's id and staged when it is next applied, because
-    /// there is nothing loaded to change.
-    fn settings_panel(&mut self, ui: &mut egui::Ui, backend: Option<&dyn Backend>) {
-        // With something selected, its own pane carries this — showing it in
-        // both places means two panels of controls for two wallpapers.
-        if self.selected.is_some() {
-            return;
-        }
-
-        let on_screen = self
-            .screens
-            .iter()
-            .find(|screen| Some(screen.name.as_str()) == self.target.as_deref())
-            .and_then(|screen| screen.current.clone());
-
-        let subject = self
-            .selected
-            .and_then(|index| self.items.get(index))
-            .map(|item| item.dir.clone())
-            .or_else(|| on_screen.clone());
-
-        // Reread only when the subject changes, with whatever was saved for it
-        // folded in so the panel shows what you last set rather than the
-        // wallpaper's defaults.
-        if self.settings_for != subject {
-            self.settings = match subject.as_deref() {
-                Some(dir) => {
-                    let mut read = properties::read(dir);
-                    if let Some(item) = self.items.iter().find(|item| item.dir == dir) {
-                        let saved = overrides::read(&item.id);
-                        for property in &mut read {
-                            if let Some(value) = saved.get(&property.key) {
-                                property.set_from_wire(value);
-                            }
-                        }
-                    }
-                    read
-                }
-                None => Vec::new(),
-            };
-            self.settings_for = subject.clone();
-        }
-
-        let Some(dir) = subject else {
-            ui.label(RichText::new("Settings").small().color(theme::MUTED));
-            ui.add_space(2.0);
-            ui.label(
-                RichText::new("Pick a wallpaper to see what it can do.")
-                    .small()
-                    .color(theme::MUTED),
-            );
-            return;
-        };
-
-        let item = self.items.iter().find(|item| item.dir == dir).cloned();
-        let title = item
-            .as_ref()
-            .map_or_else(|| "Current wallpaper".to_owned(), |item| item.title.clone());
-        let live = Some(&dir) == on_screen.as_ref();
-
-        // Reached only with nothing selected, which means this *is* the
-        // wallpaper on the screen. A wallpaper being looked at rather than
-        // shown is the pane's business, not the sidebar's.
-        if !live {
-            ui.label(RichText::new("Wallpaper").small().color(theme::MUTED));
-            ui.add(egui::Label::new(RichText::new(&title).size(13.0)).truncate());
-            ui.add_space(4.0);
-            ui.label(
-                RichText::new("Its settings appear once it is on a screen.")
-                    .small()
-                    .color(theme::MUTED),
-            );
-            return;
-        }
-
-        ui.label(RichText::new("Settings").small().color(theme::MUTED));
-        ui.add(egui::Label::new(RichText::new(&title).size(12.0)).truncate());
-        ui.label(
-            RichText::new("On this screen — changes show at once.")
-                .small()
-                .color(theme::MUTED),
-        );
-        ui.add_space(4.0);
-
-        if self.settings.is_empty() {
-            ui.label(
-                RichText::new("This wallpaper has no settings.")
-                    .small()
-                    .color(theme::MUTED),
-            );
-            return;
-        }
-
-        let screen = self.target.clone();
-        let mut changed: Option<(String, String)> = None;
-        let mut reset = false;
-
-        egui::ScrollArea::vertical()
-            .id_salt("wallpaper-settings")
-            .auto_shrink([false, true])
-            .max_height(300.0)
-            .show(ui, |ui| {
-                for property in &mut self.settings {
-                    if crate::widgets::property(ui, property) {
-                        changed = Some((property.key.clone(), property.wire()));
-                    }
-                    ui.add_space(6.0);
-                }
-                if item.is_some() {
-                    ui.add_space(4.0);
-                    reset = ui.button("Reset to defaults").clicked();
-                }
-            });
-
-        if reset && let Some(item) = item.as_ref() {
-            self.status = match overrides::clear(&item.id) {
-                Ok(()) => {
-                    // Reread from the wallpaper itself, with nothing folded in.
-                    self.settings = properties::read(&dir);
-                    "settings reset".to_owned()
-                }
-                Err(why) => why,
-            };
-            return;
-        }
-
-        let Some((key, value)) = changed else { return };
-
-        // Kept first, so a change survives whether or not a renderer takes it.
-        if let Some(item) = item.as_ref()
-            && let Err(why) = overrides::set(&item.id, &key, &value)
-        {
-            self.status = why;
-            return;
-        }
-
-        // Only reached for the wallpaper on the screen, so there is always
-        // something loaded to change.
-        self.status = match (backend, screen) {
-            (Some(backend), Some(screen)) => match backend.set_property(&screen, &key, &value) {
-                Ok(()) => format!("{key} = {value}"),
-                Err(why) => why,
-            },
-            _ => "no renderer to change it with".to_owned(),
-        };
     }
 
     /// The wallpapers themselves.
@@ -683,6 +521,11 @@ impl Library {
     /// loaded wallpaper, and there is nothing to send it to otherwise. Shown
     /// either way, because "what can this one do" is worth answering before
     /// you commit to putting it up.
+    ///
+    /// The one place these appear. They were in the sidebar as well, for
+    /// whatever was on the chosen screen, which meant two panels of controls
+    /// on screen at once and a reader having to work out which wallpaper each
+    /// belonged to.
     fn properties_of(
         &mut self,
         ui: &mut egui::Ui,
@@ -693,6 +536,8 @@ impl Library {
             .screens
             .iter()
             .any(|screen| screen.current.as_ref() == Some(&item.dir));
+
+        self.load_settings(item);
 
         ui.label(RichText::new("Settings").small().color(theme::MUTED));
         ui.add_space(2.0);
@@ -760,6 +605,29 @@ impl Library {
             },
             _ => "no renderer to change it with".to_owned(),
         };
+    }
+
+    /// Reads a wallpaper's settings, with whatever was saved for it folded in.
+    ///
+    /// Only when the subject changes: this is a file read, and the pane draws
+    /// sixty times a second. Saved values are folded over the wallpaper's own
+    /// defaults so the panel shows what you last set rather than what it
+    /// shipped with.
+    fn load_settings(&mut self, item: &Installed) {
+        if self.settings_for.as_deref() == Some(item.dir.as_path()) {
+            return;
+        }
+
+        let mut read = properties::read(&item.dir);
+        let saved = overrides::read(&item.id);
+        for property in &mut read {
+            if let Some(value) = saved.get(&property.key) {
+                property.set_from_wire(value);
+            }
+        }
+
+        self.settings = read;
+        self.settings_for = Some(item.dir.clone());
     }
 
     /// Applies one wallpaper and records what happened.

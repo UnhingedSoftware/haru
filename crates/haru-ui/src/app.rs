@@ -57,7 +57,6 @@ impl Tab {
     }
 }
 
-/// The whole application.
 /// What a renderer thread was asked to do, so its answer is read as that.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Job {
@@ -67,6 +66,7 @@ enum Job {
     Stop,
 }
 
+/// The whole application.
 pub struct Haru {
     tab: Tab,
     previews: Previews,
@@ -202,6 +202,89 @@ impl Haru {
 
     /// Draws a frame.
     pub fn ui(&mut self, ctx: &egui::Context) {
+        self.before_drawing(ctx);
+        self.tabs(ctx);
+
+        // The preview holds a renderer, and a renderer holds a wallpaper.
+        // Leaving the tab gives both back.
+        if self.tab != Tab::Preview {
+            self.preview.suspend();
+        }
+
+        match self.tab {
+            Tab::Workshop => self.workshop_tab(ctx),
+            Tab::Library => {
+                self.library.ui(
+                    ctx,
+                    &mut self.previews,
+                    &self.config,
+                    self.backend.as_deref(),
+                    self.sidebar,
+                );
+            }
+            Tab::Preview => self.preview.ui(ctx, self.sidebar),
+            Tab::Settings => self.settings_tab(ctx),
+        }
+
+        // A wallpaper picked while nothing was rendering is a request to start
+        // something, not a failure.
+        if let Some((screen, dir)) = self.library.take_pending() {
+            self.start_renderer(ctx, &screen, &dir);
+        }
+        // What a running engine was told to show, remembered for the next one
+        // it is started as.
+        if let Some((screen, dir)) = self.library.take_applied() {
+            self.config.screens.insert(screen, dir);
+            let _ = self.config.save();
+        }
+        self.collect_renderer(ctx);
+
+        self.overlays(ctx);
+
+        self.finish_frame();
+    }
+
+    /// Which screen everything applies to, where both tabs can see it.
+    ///
+    /// One picker rather than a row of cards in one tab: it is the same choice
+    /// from either, and it was previously reachable from only one of them.
+    fn screen_picker(&mut self, ui: &mut egui::Ui) {
+        let screens = self.library.screens().to_vec();
+        if !screens.is_empty() {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let chosen = self
+                    .library
+                    .target()
+                    .map_or_else(|| "Screen".to_owned(), str::to_owned);
+                egui::ComboBox::from_id_salt("screen")
+                    .selected_text(chosen)
+                    .width(160.0)
+                    .show_ui(ui, |ui| {
+                        for screen in screens {
+                            let picked = self.library.target() == Some(screen.name.as_str());
+                            // The name first, then what is on it —
+                            // two screens showing wallpapers are
+                            // told apart by the wallpaper, and by
+                            // the name when both are empty.
+                            let showing = screen
+                                .current
+                                .as_ref()
+                                .and_then(|dir| self.library.title_of(dir))
+                                .unwrap_or_else(|| "nothing".to_owned());
+                            let response = ui
+                                .selectable_label(picked, format!("{}  ·  {showing}", screen.name));
+                            if response.clicked() {
+                                self.library.set_target(screen.name.clone());
+                            }
+                        }
+                    });
+            });
+        }
+    }
+
+    /// The bookkeeping every frame starts with: the first scan, the first
+    /// question about the account, and staying awake while either is out.
+    fn before_drawing(&mut self, ctx: &egui::Context) {
         // Scanned on first sight rather than at startup: a library on a slow
         // disk should not hold the window closed.
         if !self.scanned {
@@ -227,87 +310,13 @@ impl Haru {
         {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
         }
+    }
 
-        self.tabs(ctx);
-
-        // The preview holds a renderer, and a renderer holds a wallpaper.
-        // Leaving the tab gives both back.
-        if self.tab != Tab::Preview {
-            self.preview.suspend();
-        }
-
-        match self.tab {
-            Tab::Workshop => {
-                self.browser.ui(ctx, &mut self.previews, self.sidebar);
-                // A wallpaper that just downloaded goes straight up: asking for
-                // it was the decision, and a second trip through the Library to
-                // see it is a step nobody wants.
-                if let Some(dir) = self.browser.take_landed() {
-                    self.library.refresh(&self.config, self.backend.as_deref());
-                    self.library.apply_to_target(&dir, self.backend.as_deref());
-                    self.scanned = true;
-                }
-            }
-            Tab::Library => {
-                self.library.ui(
-                    ctx,
-                    &mut self.previews,
-                    &self.config,
-                    self.backend.as_deref(),
-                    self.sidebar,
-                );
-            }
-            Tab::Preview => self.preview.ui(ctx, self.sidebar),
-            Tab::Settings => {
-                let asked = self.settings.ui(
-                    ctx,
-                    &mut self.config,
-                    self.backend.as_deref(),
-                    self.account.who(),
-                    self.account.has_client(),
-                );
-                if asked.sign_in {
-                    self.account.open();
-                }
-                if asked.install {
-                    self.installer.offer();
-                }
-                if let Some(what) = asked.renderer {
-                    self.manage_renderer(ctx, what);
-                }
-                if asked.sign_out {
-                    self.sign_out_request = Some(self.workshop.send(Request::SignOut));
-                }
-                if asked.changed {
-                    // A changed socket means a different renderer, and a
-                    // changed library means a different set of wallpapers.
-                    self.backend = haru_apply::detect(self.config.socket.clone());
-                    self.browser.reconfigure(
-                        self.config.adult,
-                        self.config.per_page,
-                        self.config.infinite_scroll,
-                    );
-                    self.browser.set_install_root(self.config.install_root());
-                    self.scanned = false;
-                }
-            }
-        }
-
-        // A wallpaper picked while nothing was rendering is a request to start
-        // something, not a failure.
-        if let Some((screen, dir)) = self.library.take_pending() {
-            self.start_renderer(ctx, &screen, &dir);
-        }
-        // What a running engine was told to show, remembered for the next one
-        // it is started as.
-        if let Some((screen, dir)) = self.library.take_applied() {
-            self.config.screens.insert(screen, dir);
-            let _ = self.config.save();
-        }
-        self.collect_renderer(ctx);
-
-        // Last, so they sit over whatever was drawn. One at a time: two
-        // modals over each other is a window nobody can answer.
+    /// The overlays, drawn last so they sit over everything.
+    ///
+    /// One at a time: two modals over each other is a window nobody can
+    /// answer.
+    fn overlays(&mut self, ctx: &egui::Context) {
         match self.installer.ui(ctx) {
             crate::renderer::Outcome::Installed(web) => {
                 self.config.renderer_web = Some(web.key().to_owned());
@@ -325,8 +334,54 @@ impl Haru {
         if !self.installer.is_open() && self.account.ui(ctx) {
             self.sign_in_request = Some(self.workshop.send(Request::SignIn));
         }
+    }
 
-        self.finish_frame();
+    /// The browser, and what happens to a wallpaper that finishes downloading.
+    fn workshop_tab(&mut self, ctx: &egui::Context) {
+        self.browser.ui(ctx, &mut self.previews, self.sidebar);
+        // A wallpaper that just downloaded goes straight up: asking for it was
+        // the decision, and a second trip through the Library to see it is a
+        // step nobody wants.
+        if let Some(dir) = self.browser.take_landed() {
+            self.library.refresh(&self.config, self.backend.as_deref());
+            self.library.apply_to_target(&dir, self.backend.as_deref());
+            self.scanned = true;
+        }
+    }
+
+    /// The settings pane, and everything it can ask for.
+    fn settings_tab(&mut self, ctx: &egui::Context) {
+        let asked = self.settings.ui(
+            ctx,
+            &mut self.config,
+            self.backend.as_deref(),
+            self.account.who(),
+            self.account.has_client(),
+        );
+        if asked.sign_in {
+            self.account.open();
+        }
+        if asked.install {
+            self.installer.offer();
+        }
+        if let Some(what) = asked.renderer {
+            self.manage_renderer(ctx, what);
+        }
+        if asked.sign_out {
+            self.sign_out_request = Some(self.workshop.send(Request::SignOut));
+        }
+        if asked.changed {
+            // A changed socket means a different renderer, and a
+            // changed library means a different set of wallpapers.
+            self.backend = haru_apply::detect(self.config.socket.clone());
+            self.browser.reconfigure(
+                self.config.adult,
+                self.config.per_page,
+                self.config.infinite_scroll,
+            );
+            self.browser.set_install_root(self.config.install_root());
+            self.scanned = false;
+        }
     }
 
     /// What the engine should own, and what should be on each screen.
@@ -624,44 +679,7 @@ impl Haru {
                         }
                     }
 
-                    // Which screen everything applies to, where both tabs can
-                    // see it. One picker rather than a row of cards in one tab:
-                    // it is the same choice from either, and it was previously
-                    // reachable from only one of them.
-                    let screens = self.library.screens().to_vec();
-                    if !screens.is_empty() {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let chosen = self
-                                .library
-                                .target()
-                                .map_or_else(|| "Screen".to_owned(), str::to_owned);
-                            egui::ComboBox::from_id_salt("screen")
-                                .selected_text(chosen)
-                                .width(160.0)
-                                .show_ui(ui, |ui| {
-                                    for screen in screens {
-                                        let picked =
-                                            self.library.target() == Some(screen.name.as_str());
-                                        // The name first, then what is on it —
-                                        // two screens showing wallpapers are
-                                        // told apart by the wallpaper, and by
-                                        // the name when both are empty.
-                                        let showing = screen
-                                            .current
-                                            .as_ref()
-                                            .and_then(|dir| self.library.title_of(dir))
-                                            .unwrap_or_else(|| "nothing".to_owned());
-                                        let response = ui.selectable_label(
-                                            picked,
-                                            format!("{}  ·  {showing}", screen.name),
-                                        );
-                                        if response.clicked() {
-                                            self.library.set_target(screen.name.clone());
-                                        }
-                                    }
-                                });
-                        });
-                    }
+                    self.screen_picker(ui);
                 });
             });
     }
