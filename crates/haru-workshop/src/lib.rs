@@ -373,6 +373,46 @@ async fn install(
 }
 
 /// The worker: one runtime, one session, requests in order.
+/// Opens the connection if it is not open, and serves one request over it.
+///
+/// Kept open between requests: it costs about a second, which is most of what
+/// a search costs.
+async fn answer(
+    session: &mut Option<Session>,
+    request: Request,
+    replies: &Sender<(RequestId, Reply)>,
+    id: RequestId,
+) -> Reply {
+    if session.is_none() {
+        match Session::automatic(None).await {
+            Ok(open) => *session = Some(open),
+            Err(error) => return Reply::Failed(error.to_string()),
+        }
+    }
+    let Some(open) = session.as_mut() else {
+        return Reply::Failed("no session".to_owned());
+    };
+    serve(request, open, replies, id).await
+}
+
+/// Whether a failure is the connection having gone away rather than the
+/// request being wrong.
+///
+/// Matched on the message because that is what a session hands back. The cost
+/// of being wrong either way is one extra reconnection, or one failure that
+/// could have been retried — never a wrong answer.
+fn was_dropped(why: &str) -> bool {
+    let why = why.to_ascii_lowercase();
+    [
+        "connection closed",
+        "connection reset",
+        "broken pipe",
+        "not connected",
+    ]
+    .iter()
+    .any(|sign| why.contains(sign))
+}
+
 /// What can be answered without a Steam connection.
 ///
 /// Returns `None` when the request needs one. Both of these used to be handled
@@ -478,21 +518,16 @@ fn worker(requests: &Receiver<(RequestId, Request)>, replies: &Sender<(RequestId
             continue;
         }
 
-        let reply = runtime.block_on(async {
-            // Opened on first use and kept: the connection costs about a
-            // second, which is most of what a search costs.
-            if session.is_none() {
-                match Session::automatic(None).await {
-                    Ok(open) => session = Some(open),
-                    Err(error) => return Reply::Failed(error.to_string()),
-                }
-            }
-            let Some(session) = session.as_mut() else {
-                return Reply::Failed("no session".to_owned());
-            };
+        let mut reply = runtime.block_on(answer(&mut session, request.clone(), replies, id));
 
-            serve(request, session, replies, id).await
-        });
+        // A connection that has been sitting idle gets closed by the far end,
+        // and the first request after that fails on a socket nobody told us
+        // about. Once, and only for that: opening a new one costs a second,
+        // and a request that failed on its own merits must not be sent twice.
+        if matches!(&reply, Reply::Failed(why) if was_dropped(why)) {
+            session = None;
+            reply = runtime.block_on(answer(&mut session, request, replies, id));
+        }
 
         // A dropped UI ends the worker; there is nobody left to answer.
         if replies.send((id, reply)).is_err() {

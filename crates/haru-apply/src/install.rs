@@ -235,6 +235,25 @@ pub fn latest(web: Web) -> Result<Build, String> {
         .ok_or("the release has no tag")?
         .to_owned();
 
+    let (url, sha256, size) = asset_in(&release, &tag, web)?;
+
+    Ok(Build {
+        tag,
+        url,
+        sha256,
+        size,
+    })
+}
+
+/// Finds one flavour's file in a release, and what vouches for it.
+///
+/// Everything the fetch does rests on the digest, so a release that publishes
+/// no sha256 for the file is refused rather than downloaded on trust.
+fn asset_in(
+    release: &serde_json::Value,
+    tag: &str,
+    web: Web,
+) -> Result<(String, String, u64), String> {
     let assets = release
         .get("assets")
         .and_then(serde_json::Value::as_array)
@@ -271,13 +290,7 @@ pub fn latest(web: Web) -> Result<Build, String> {
     if size > MAX_BYTES {
         return Err("that file is larger than any kirie release".to_owned());
     }
-
-    Ok(Build {
-        tag,
-        url,
-        sha256,
-        size,
-    })
+    Ok((url, sha256, size))
 }
 
 /// Fetches a build and puts it at `target`.

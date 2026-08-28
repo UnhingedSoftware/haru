@@ -431,6 +431,121 @@ impl Browser {
         }
     }
 
+    /// The tiles themselves. Returns whether the end of the list is on screen,
+    /// which in endless mode is the request for the next page.
+    fn tiles(
+        &mut self,
+        ui: &mut egui::Ui,
+        previews: &mut Previews,
+        items: &[BrowseResult],
+        columns: usize,
+        tile_width: f32,
+    ) -> bool {
+        let mut hit_bottom = false;
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for (row, chunk) in items.chunks(columns).enumerate() {
+                    ui.horizontal(|ui| {
+                        for (column, found) in chunk.iter().enumerate() {
+                            let index = row * columns + column;
+                            let clicked = tile::show(
+                                ui,
+                                previews,
+                                found,
+                                tile_width,
+                                self.selected == Some(index),
+                            );
+                            if clicked {
+                                self.selected = Some(index);
+                            }
+                        }
+                    });
+                    ui.add_space(10.0);
+                }
+
+                if self.infinite {
+                    // A marker at the end of the list: once it is on screen,
+                    // there is nothing below and the next page is wanted.
+                    let (rect, _) = ui
+                        .allocate_exact_size(egui::vec2(ui.available_width(), 1.0), Sense::hover());
+                    hit_bottom = ui.is_rect_visible(rect);
+                    if self.awaiting.is_some() {
+                        ui.vertical_centered(|ui| ui.spinner());
+                        ui.add_space(8.0);
+                    }
+                }
+            });
+        hit_bottom
+    }
+
+    /// What fills the grid before there is anything to put in it.
+    fn waiting_or_error(&self, ui: &mut egui::Ui) {
+        ui.centered_and_justified(|ui| match &self.status {
+            Status::Failed(why) => {
+                ui.label(RichText::new(why).color(ui.visuals().error_fg_color));
+            }
+            _ => {
+                ui.spinner();
+            }
+        });
+    }
+
+    /// The numbered strip: first, last, and a window around where you are.
+    fn page_strip(&mut self, ui: &mut egui::Ui, total: u32) {
+        let pages = self.filters.pages(total);
+        let current = self.filters.page;
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let waiting = self.awaiting.is_some();
+            let mut jump = None;
+
+            if ui
+                .add_enabled(
+                    current < pages && !waiting,
+                    egui::Button::new(crate::icons::text(crate::icons::Icon::Next)),
+                )
+                .clicked()
+            {
+                jump = Some(current.saturating_add(1));
+            }
+
+            // Right to left, so the numbers are built backwards and read
+            // forwards.
+            for number in strip(current, pages).into_iter().rev() {
+                match number {
+                    Some(number) if number == current => {
+                        let _ = ui.selectable_label(true, RichText::new(number.to_string()));
+                    }
+                    Some(number) => {
+                        if ui
+                            .add_enabled(!waiting, egui::Button::new(number.to_string()))
+                            .clicked()
+                        {
+                            jump = Some(number);
+                        }
+                    }
+                    None => {
+                        ui.weak("…");
+                    }
+                }
+            }
+
+            if ui
+                .add_enabled(
+                    current > 1 && !waiting,
+                    egui::Button::new(crate::icons::text(crate::icons::Icon::Previous)),
+                )
+                .clicked()
+            {
+                jump = Some(current.saturating_sub(1));
+            }
+
+            if let Some(page) = jump {
+                self.go_to(page);
+            }
+        });
+    }
+
     /// The search box, and where a search looks.
     ///
     /// Searching happens on Enter rather than per keystroke: every search is a
@@ -514,24 +629,16 @@ impl Browser {
 
     /// The result grid.
     fn grid(&mut self, ui: &mut egui::Ui, previews: &mut Previews) {
-        let Some(page) = self.page.as_ref() else {
-            ui.centered_and_justified(|ui| match &self.status {
-                Status::Failed(why) => {
-                    ui.label(RichText::new(why).color(ui.visuals().error_fg_color));
-                }
-                _ => {
-                    ui.spinner();
-                }
-            });
+        if self.page.is_none() {
+            self.waiting_or_error(ui);
             return;
-        };
-
+        }
         // In endless mode this is every result loaded so far; in paged mode
         // the kept list is empty and this is just the page.
         let items: Vec<BrowseResult> = self
             .appended
             .iter()
-            .chain(page.items.iter())
+            .chain(self.page.iter().flat_map(|page| page.items.iter()))
             .cloned()
             .collect();
 
@@ -545,43 +652,8 @@ impl Browser {
         // Whatever fits, at a size that uses the whole width — a fixed tile
         // leaves the remainder as a gap down the side of the grid.
         let (columns, tile_width) = tile::columns_for(ui.available_width(), TILE, 8.0);
-        let mut hit_bottom = false;
 
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                for (row, chunk) in items.chunks(columns).enumerate() {
-                    ui.horizontal(|ui| {
-                        for (column, found) in chunk.iter().enumerate() {
-                            let index = row * columns + column;
-                            let clicked = tile::show(
-                                ui,
-                                previews,
-                                found,
-                                tile_width,
-                                self.selected == Some(index),
-                            );
-                            if clicked {
-                                self.selected = Some(index);
-                            }
-                        }
-                    });
-                    ui.add_space(10.0);
-                }
-
-                if self.infinite {
-                    // A marker at the end of the list: once it is on screen,
-                    // there is nothing below and the next page is wanted.
-                    let (rect, _) = ui
-                        .allocate_exact_size(egui::vec2(ui.available_width(), 1.0), Sense::hover());
-                    hit_bottom = ui.is_rect_visible(rect);
-                    if self.awaiting.is_some() {
-                        ui.vertical_centered(|ui| ui.spinner());
-                        ui.add_space(8.0);
-                    }
-                }
-            });
-
+        let hit_bottom = self.tiles(ui, previews, &items, columns, tile_width);
         if hit_bottom
             && self.awaiting.is_none()
             && self.page.as_ref().is_some_and(BrowsePage::has_more)
@@ -708,57 +780,7 @@ impl Browser {
                 return;
             }
 
-            let pages = self.filters.pages(total);
-            let current = self.filters.page;
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let waiting = self.awaiting.is_some();
-                let mut jump = None;
-
-                if ui
-                    .add_enabled(
-                        current < pages && !waiting,
-                        egui::Button::new(crate::icons::text(crate::icons::Icon::Next)),
-                    )
-                    .clicked()
-                {
-                    jump = Some(current.saturating_add(1));
-                }
-
-                // Right to left, so the numbers are built backwards and read
-                // forwards.
-                for number in strip(current, pages).into_iter().rev() {
-                    match number {
-                        Some(number) if number == current => {
-                            let _ = ui.selectable_label(true, RichText::new(number.to_string()));
-                        }
-                        Some(number) => {
-                            if ui
-                                .add_enabled(!waiting, egui::Button::new(number.to_string()))
-                                .clicked()
-                            {
-                                jump = Some(number);
-                            }
-                        }
-                        None => {
-                            ui.weak("…");
-                        }
-                    }
-                }
-
-                if ui
-                    .add_enabled(
-                        current > 1 && !waiting,
-                        egui::Button::new(crate::icons::text(crate::icons::Icon::Previous)),
-                    )
-                    .clicked()
-                {
-                    jump = Some(current.saturating_sub(1));
-                }
-
-                if let Some(page) = jump {
-                    self.go_to(page);
-                }
-            });
+            self.page_strip(ui, total);
         });
         ui.add_space(4.0);
     }

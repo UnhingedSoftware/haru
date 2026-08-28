@@ -363,6 +363,43 @@ impl Preview {
 /// While a stream is up this loop never blocks on the UI — it reads frames as
 /// fast as the renderer sends them and checks for edits between each. With no
 /// stream there is nothing to do until something is asked for.
+/// Renders one job, reusing the open stream when it can.
+///
+/// Three ways down, in order of cost: the stream already showing this
+/// wallpaper takes the edits alone; a new stream is started for a different
+/// one; and where no streaming renderer exists at all, a still per edit —
+/// the same picture arriving slower.
+fn render(
+    offscreen: &Offscreen,
+    still: &std::path::Path,
+    live: &mut Option<Live>,
+    job: &Job,
+) -> Result<Rendered, String> {
+    // A stream already showing this wallpaper only needs the edits.
+    let updated = match live.as_mut() {
+        Some(open) if open.dir == job.dir => open.update(&job.properties).ok(),
+        _ => None,
+    };
+
+    match updated {
+        Some(frame) => Ok(Rendered::Live(frame)),
+        None => match Live::start(offscreen.binary(), &job.dir, &job.properties) {
+            Ok((open, frame)) => {
+                *live = Some(open);
+                Ok(Rendered::Live(frame))
+            }
+            Err(_) => {
+                // No streaming renderer: one still per edit, which is the same
+                // picture arriving slower.
+                *live = None;
+                offscreen
+                    .render(&job.dir, &job.properties, still)
+                    .map(|()| Rendered::Still(still.to_path_buf()))
+            }
+        },
+    }
+}
+
 fn worker(
     pending: &Arc<Mutex<Option<Job>>>,
     watching: &Arc<AtomicBool>,
@@ -393,30 +430,7 @@ fn worker(
             seq = job.seq;
             let started = std::time::Instant::now();
 
-            // A stream already showing this wallpaper only needs the edits.
-            let updated = match live.as_mut() {
-                Some(open) if open.dir == job.dir => open.update(&job.properties).ok(),
-                _ => None,
-            };
-
-            let result = match updated {
-                Some(frame) => Ok(Rendered::Live(frame)),
-                None => match Live::start(offscreen.binary(), &job.dir, &job.properties) {
-                    Ok((open, frame)) => {
-                        live = Some(open);
-                        Ok(Rendered::Live(frame))
-                    }
-                    Err(_) => {
-                        // No streaming renderer: one still per edit, which is
-                        // the same picture arriving slower.
-                        live = None;
-                        offscreen
-                            .render(&job.dir, &job.properties, &still)
-                            .map(|()| Rendered::Still(still.clone()))
-                    }
-                },
-            };
-
+            let result = render(&offscreen, &still, &mut live, &job);
             let failed = result.is_err();
             if frames
                 .send(Frame {

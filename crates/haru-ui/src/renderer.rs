@@ -152,65 +152,7 @@ impl Installer {
                 );
                 ui.add_space(14.0);
 
-                match &self.phase {
-                    Phase::Choosing => {
-                        start = self.choices(ui);
-                    }
-                    Phase::Working(done, total) => {
-                        ui.label(RichText::new("Downloading…").strong());
-                        ui.add_space(6.0);
-                        let fraction = if *total == 0 {
-                            0.0
-                        } else {
-                            (*done as f32 / *total as f32).clamp(0.0, 1.0)
-                        };
-                        ui.add(egui::ProgressBar::new(fraction).desired_height(8.0));
-                        ui.add_space(4.0);
-                        ui.label(
-                            RichText::new(format!(
-                                "{} of {}",
-                                human_size(*done),
-                                human_size(*total)
-                            ))
-                            .small()
-                            .color(theme::MUTED),
-                        );
-                    }
-                    Phase::Done(path) => {
-                        ui.label(
-                            RichText::new(format!("Installed to {}", path.display()))
-                                .color(theme::ACCENT),
-                        );
-                        ui.add_space(4.0);
-                        ui.label(
-                            RichText::new(
-                                "haru uses it as soon as it is running — start it, or let \
-                                 whatever puts your wallpaper up at login do it.",
-                            )
-                            .small()
-                            .color(theme::MUTED),
-                        );
-                        ui.add_space(12.0);
-                        if ui
-                            .add_sized([ui.available_width(), 30.0], egui::Button::new("Close"))
-                            .clicked()
-                        {
-                            close = true;
-                        }
-                    }
-                    Phase::Failed(why) => {
-                        ui.label(RichText::new(why).color(theme::DANGER));
-                        ui.add_space(12.0);
-                        ui.horizontal(|ui| {
-                            if ui.button("Try again").clicked() {
-                                start = true;
-                            }
-                            if ui.button("Not now").clicked() {
-                                close = true;
-                            }
-                        });
-                    }
-                }
+                start |= self.phase_ui(ui, &mut close);
             });
 
         if start {
@@ -227,6 +169,67 @@ impl Installer {
             };
         }
         outcome
+    }
+
+    /// Whatever the overlay is doing right now: the choice, the bar, the
+    /// outcome. Returns whether a fetch was asked for.
+    fn phase_ui(&mut self, ui: &mut egui::Ui, close: &mut bool) -> bool {
+        let mut start = false;
+        match &self.phase {
+            Phase::Choosing => {
+                start = self.choices(ui);
+            }
+            Phase::Working(done, total) => {
+                ui.label(RichText::new("Downloading…").strong());
+                ui.add_space(6.0);
+                let fraction = if *total == 0 {
+                    0.0
+                } else {
+                    (*done as f32 / *total as f32).clamp(0.0, 1.0)
+                };
+                ui.add(egui::ProgressBar::new(fraction).desired_height(8.0));
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(format!("{} of {}", human_size(*done), human_size(*total)))
+                        .small()
+                        .color(theme::MUTED),
+                );
+            }
+            Phase::Done(path) => {
+                ui.label(
+                    RichText::new(format!("Installed to {}", path.display())).color(theme::ACCENT),
+                );
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(
+                        "haru uses it as soon as it is running — start it, or let \
+                 whatever puts your wallpaper up at login do it.",
+                    )
+                    .small()
+                    .color(theme::MUTED),
+                );
+                ui.add_space(12.0);
+                if ui
+                    .add_sized([ui.available_width(), 30.0], egui::Button::new("Close"))
+                    .clicked()
+                {
+                    *close = true;
+                }
+            }
+            Phase::Failed(why) => {
+                ui.label(RichText::new(why).color(theme::DANGER));
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Try again").clicked() {
+                        start = true;
+                    }
+                    if ui.button("Not now").clicked() {
+                        *close = true;
+                    }
+                });
+            }
+        }
+        start
     }
 
     /// The two builds, as something to pick between. Returns whether to fetch.

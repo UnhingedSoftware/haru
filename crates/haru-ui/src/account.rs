@@ -186,86 +186,7 @@ impl Account {
 
                 ui.add_space(14.0);
 
-                match self.code.as_mut() {
-                    Some((url, texture)) => {
-                        ui.vertical_centered(|ui| {
-                            let picture = texture.get_or_insert_with(|| {
-                                ui.ctx().load_texture(
-                                    "qr",
-                                    render(url),
-                                    egui::TextureOptions::NEAREST,
-                                )
-                            });
-                            ui.add(
-                                egui::Image::new(&*picture)
-                                    .fit_to_exact_size(egui::vec2(220.0, 220.0)),
-                            );
-                            ui.add_space(6.0);
-                            ui.label(
-                                RichText::new("Scan it with the Steam mobile app")
-                                    .small()
-                                    .color(theme::MUTED),
-                            );
-                            ui.add_space(4.0);
-                            ui.hyperlink_to(RichText::new("or open the link").small(), url.clone());
-                        });
-                    }
-                    None => {
-                        if ui
-                            .add_sized(
-                                [ui.available_width(), 34.0],
-                                egui::Button::new("Sign in with a QR code"),
-                            )
-                            .clicked()
-                        {
-                            asked = true;
-                            self.waiting = true;
-                        }
-                        ui.add_space(4.0);
-                        ui.label(
-                            RichText::new("No password is typed; approve it on your phone.")
-                                .small()
-                                .color(theme::MUTED),
-                        );
-
-                        ui.add_space(14.0);
-                        ui.separator();
-                        ui.add_space(10.0);
-
-                        if self.client {
-                            ui.label(
-                                RichText::new("Steam is running — downloads can go through it.")
-                                    .color(theme::ACCENT),
-                            );
-                        } else {
-                            ui.label(RichText::new("Or use the Steam client").strong());
-                            ui.add_space(4.0);
-                            ui.label(
-                                RichText::new(
-                                    "With Steam open and signed in, haru can subscribe through \
-                                     it and skip signing in here.",
-                                )
-                                .small()
-                                .color(theme::MUTED),
-                            );
-                            ui.add_space(6.0);
-                            if ui
-                                .add_sized(
-                                    [ui.available_width(), 30.0],
-                                    egui::Button::new("Open Steam"),
-                                )
-                                .clicked()
-                            {
-                                // The URL rather than the binary: it is what a
-                                // desktop file would run, and it works whether
-                                // Steam is native, Flatpak or Snap.
-                                let _ = std::process::Command::new("xdg-open")
-                                    .arg("steam://open/main")
-                                    .spawn();
-                            }
-                        }
-                    }
-                }
+                asked |= self.routes(ui);
 
                 if self.waiting && self.code.is_none() {
                     ui.add_space(8.0);
@@ -295,6 +216,90 @@ impl Account {
         if close {
             self.open = false;
             self.code = None;
+        }
+        asked
+    }
+}
+
+impl Account {
+    /// The two ways in: a code to scan, or a client already signed in.
+    ///
+    /// Returns whether a sign-in was asked for.
+    fn routes(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut asked = false;
+        match self.code.as_mut() {
+            Some((url, texture)) => {
+                ui.vertical_centered(|ui| {
+                    let picture = texture.get_or_insert_with(|| {
+                        ui.ctx()
+                            .load_texture("qr", render(url), egui::TextureOptions::NEAREST)
+                    });
+                    ui.add(egui::Image::new(&*picture).fit_to_exact_size(egui::vec2(220.0, 220.0)));
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new("Scan it with the Steam mobile app")
+                            .small()
+                            .color(theme::MUTED),
+                    );
+                    ui.add_space(4.0);
+                    ui.hyperlink_to(RichText::new("or open the link").small(), url.clone());
+                });
+            }
+            None => {
+                if ui
+                    .add_sized(
+                        [ui.available_width(), 34.0],
+                        egui::Button::new("Sign in with a QR code"),
+                    )
+                    .clicked()
+                {
+                    asked = true;
+                    self.waiting = true;
+                }
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new("No password is typed; approve it on your phone.")
+                        .small()
+                        .color(theme::MUTED),
+                );
+
+                ui.add_space(14.0);
+                ui.separator();
+                ui.add_space(10.0);
+
+                if self.client {
+                    ui.label(
+                        RichText::new("Steam is running — downloads can go through it.")
+                            .color(theme::ACCENT),
+                    );
+                } else {
+                    ui.label(RichText::new("Or use the Steam client").strong());
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(
+                            "With Steam open and signed in, haru can subscribe through \
+                     it and skip signing in here.",
+                        )
+                        .small()
+                        .color(theme::MUTED),
+                    );
+                    ui.add_space(6.0);
+                    if ui
+                        .add_sized(
+                            [ui.available_width(), 30.0],
+                            egui::Button::new("Open Steam"),
+                        )
+                        .clicked()
+                    {
+                        // The URL rather than the binary: it is what a
+                        // desktop file would run, and it works whether
+                        // Steam is native, Flatpak or Snap.
+                        let _ = std::process::Command::new("xdg-open")
+                            .arg("steam://open/main")
+                            .spawn();
+                    }
+                }
+            }
         }
         asked
     }
