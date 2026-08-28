@@ -13,6 +13,7 @@ haru-apply = { workspace = true }
 haru-core = { workspace = true }
 haru-media = { workspace = true }
 haru-workshop = { workspace = true }
+image = { workspace = true }
 tapline = { workspace = true }
 
 [lints]

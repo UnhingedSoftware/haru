@@ -151,8 +151,12 @@ pub struct Filters {
     pub updated_since: Option<u32>,
     /// Whether to let adult content through.
     pub adult: bool,
-    /// Which page, as Steam's cursor.
-    pub cursor: Option<String>,
+    /// Which page, 1-based.
+    ///
+    /// A number rather than Steam's cursor: a cursor only walks forward, and
+    /// a strip that says 1 2 3 4 has to be able to go anywhere. Measured to
+    /// work at least a thousand pages deep.
+    pub page: u32,
     /// How many per page.
     pub per_page: u32,
 }
@@ -164,6 +168,7 @@ impl Filters {
         Self {
             chosen: vec![None; TAG_GROUPS.len()],
             per_page: 24,
+            page: 1,
             ..Self::default()
         }
     }
@@ -174,6 +179,13 @@ impl Filters {
         !self.text.is_empty()
             || self.chosen.iter().any(Option::is_some)
             || self.updated_since.is_some()
+    }
+
+    /// How many pages a result count fills.
+    #[must_use]
+    pub const fn pages(&self, total: u32) -> u32 {
+        let per_page = if self.per_page == 0 { 1 } else { self.per_page };
+        total.div_ceil(per_page)
     }
 
     /// Clears every filter, keeping the sort.
@@ -222,7 +234,7 @@ impl Filters {
                 end: None,
             }),
             per_page: self.per_page,
-            cursor: self.cursor.clone(),
+            page: (self.page > 1).then_some(self.page),
             ..BrowseQuery::default()
         }
     }

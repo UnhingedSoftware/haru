@@ -10,7 +10,7 @@ use haru_apply::Backend;
 use haru_core::{Config, Filters};
 use haru_media::Previews;
 
-use crate::{Browser, Library, Settings, theme};
+use crate::{Browser, Library, Preview, Settings, theme};
 
 /// Which view is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,6 +19,8 @@ pub enum Tab {
     Workshop,
     /// The wallpapers already installed, and what is on each screen.
     Library,
+    /// One wallpaper, rendered off-screen and editable.
+    Preview,
     /// The app's own settings.
     Settings,
 }
@@ -30,19 +32,21 @@ impl Tab {
         match name {
             "workshop" | "browse" => Some(Self::Workshop),
             "library" | "installed" => Some(Self::Library),
+            "preview" | "studio" => Some(Self::Preview),
             "settings" => Some(Self::Settings),
             _ => None,
         }
     }
 
     /// Every name [`Tab::parse`] accepts, canonical form first.
-    pub const NAMES: [&'static str; 3] = ["workshop", "library", "settings"];
+    pub const NAMES: [&'static str; 4] = ["workshop", "library", "preview", "settings"];
 
     /// What the tab is called.
     const fn label(self) -> &'static str {
         match self {
             Self::Workshop => "Workshop",
             Self::Library => "Library",
+            Self::Preview => "Preview",
             Self::Settings => "Settings",
         }
     }
@@ -54,6 +58,7 @@ pub struct Haru {
     previews: Previews,
     browser: Browser,
     library: Library,
+    preview: Preview,
     settings: Settings,
     config: Config,
     /// What renders wallpapers here, if anything does.
@@ -64,6 +69,11 @@ pub struct Haru {
     backend: Option<Box<dyn Backend>>,
     /// Whether the library has been scanned since it was last invalidated.
     scanned: bool,
+    /// Whether the left panel is showing.
+    ///
+    /// One switch for both views: it is the same edge of the same window, and
+    /// someone who hides it to see more wallpapers means it in both.
+    sidebar: bool,
 }
 
 impl Default for Haru {
@@ -86,6 +96,12 @@ impl Haru {
     /// showing the answer beats coming up on the front page.
     #[must_use]
     pub fn opening_on(tab: Tab, search: Option<String>) -> Self {
+        Self::opening_on_item(tab, search, None)
+    }
+
+    /// The same, opening the preview on one installed wallpaper by id.
+    #[must_use]
+    pub fn opening_on_item(tab: Tab, search: Option<String>, item: Option<String>) -> Self {
         let config = Config::load();
         let backend = haru_apply::detect(config.socket.clone());
 
@@ -95,18 +111,34 @@ impl Haru {
             text: search.unwrap_or_default(),
             ..Filters::new()
         };
+        let mut browser = Browser::with_filters(filters);
+        browser.reconfigure(config.adult, config.per_page, config.infinite_scroll);
         let mut settings = Settings::default();
         settings.sync(&config);
+
+        let mut preview = Preview::new();
+        if let Some(wanted) = item {
+            // Scanned here rather than waiting for the Library tab: opening
+            // straight into a preview should not need a detour through it.
+            if let Some(found) = haru_core::library::scan(&config.libraries())
+                .into_iter()
+                .find(|installed| installed.id == wanted)
+            {
+                preview.open(found);
+            }
+        }
 
         Self {
             tab,
             previews: Previews::new(),
-            browser: Browser::with_filters(filters),
+            browser,
             library: Library::new(),
+            preview,
             settings,
             config,
             backend,
             scanned: false,
+            sidebar: true,
         }
     }
 
@@ -122,13 +154,24 @@ impl Haru {
         self.tabs(ctx);
 
         match self.tab {
-            Tab::Workshop => self.browser.ui(ctx, &mut self.previews),
-            Tab::Library => self.library.ui(
-                ctx,
-                &mut self.previews,
-                &self.config,
-                self.backend.as_deref(),
-            ),
+            Tab::Workshop => self.browser.ui(ctx, &mut self.previews, self.sidebar),
+            Tab::Library => {
+                self.library.ui(
+                    ctx,
+                    &mut self.previews,
+                    &self.config,
+                    self.backend.as_deref(),
+                    self.sidebar,
+                );
+                // Asking to preview something is how most people will reach
+                // that tab, so the library switches to it rather than leaving
+                // the button looking like it did nothing.
+                if let Some(item) = self.library.take_preview_request() {
+                    self.preview.open(item);
+                    self.tab = Tab::Preview;
+                }
+            }
+            Tab::Preview => self.preview.ui(ctx, self.sidebar),
             Tab::Settings => {
                 if self
                     .settings
@@ -137,8 +180,11 @@ impl Haru {
                     // A changed socket means a different renderer, and a
                     // changed library means a different set of wallpapers.
                     self.backend = haru_apply::detect(self.config.socket.clone());
-                    self.browser
-                        .reconfigure(self.config.adult, self.config.per_page);
+                    self.browser.reconfigure(
+                        self.config.adult,
+                        self.config.per_page,
+                        self.config.infinite_scroll,
+                    );
                     self.scanned = false;
                 }
             }
@@ -151,10 +197,24 @@ impl Haru {
             .frame(theme::panel_frame(theme::Side::Left))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
+                    // The panel is worth more than the button that hides it,
+                    // so the button is small and lives before the name.
+                    if ui
+                        .selectable_label(self.sidebar, "☰")
+                        .on_hover_text(if self.sidebar {
+                            "Hide the panel"
+                        } else {
+                            "Show the panel"
+                        })
+                        .clicked()
+                    {
+                        self.sidebar = !self.sidebar;
+                    }
+                    ui.add_space(6.0);
                     ui.label(RichText::new("haru").size(17.0).strong());
                     ui.add_space(14.0);
 
-                    for tab in [Tab::Workshop, Tab::Library, Tab::Settings] {
+                    for tab in [Tab::Workshop, Tab::Library, Tab::Preview, Tab::Settings] {
                         let chosen = self.tab == tab;
                         if ui
                             .selectable_label(

@@ -14,9 +14,11 @@ const INITIAL: [f32; 2] = [1280.0, 820.0];
 struct Opened {
     tab: Tab,
     search: Option<String>,
+    /// A Workshop id to open the preview on.
+    item: Option<String>,
 }
 
-/// Reads `haru [TAB] [--search TEXT]`.
+/// Reads `haru [TAB] [--search TEXT] [--item ID]`.
 ///
 /// Deliberately tiny. A picker is opened by a launcher or a shortcut, and the
 /// only things either wants to say are which tab and what to search for.
@@ -24,11 +26,16 @@ fn parse(arguments: &[String]) -> Result<Opened, String> {
     let mut opened = Opened {
         tab: Tab::Library,
         search: None,
+        item: None,
     };
     let mut rest = arguments.iter();
 
     while let Some(argument) = rest.next() {
         match argument.as_str() {
+            "--item" => {
+                opened.item = Some(rest.next().ok_or("--item needs a Workshop id")?.clone());
+                opened.tab = Tab::Preview;
+            }
             "--search" => {
                 opened.search = Some(rest.next().ok_or("--search needs something to search for")?.clone());
                 opened.tab = Tab::Workshop;
@@ -72,7 +79,7 @@ fn main() -> ExitCode {
         Box::new(move |cc| {
             haru_ui::theme::apply(&cc.egui_ctx);
             Ok(Box::new(App {
-                haru: Haru::opening_on(opened.tab, opened.search),
+                haru: Haru::opening_on_item(opened.tab, opened.search, opened.item),
             }))
         }),
     ) {

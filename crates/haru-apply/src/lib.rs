@@ -11,8 +11,10 @@
 use std::path::{Path, PathBuf};
 
 mod kirie;
+mod offscreen;
 
 pub use kirie::Kirie;
+pub use offscreen::Offscreen;
 
 /// A screen a wallpaper can go on.
 #[derive(Debug, Clone, PartialEq, Eq)]

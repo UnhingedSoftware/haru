@@ -77,6 +77,8 @@ pub struct Library {
     /// Read from disk, so they are reread when the screen or its wallpaper
     /// changes and not on every frame.
     settings_for: Option<PathBuf>,
+    /// A wallpaper the detail pane asked to open in the preview.
+    preview_requested: Option<Installed>,
 }
 
 impl Default for Library {
@@ -100,7 +102,16 @@ impl Library {
             confirming: None,
             settings: Vec::new(),
             settings_for: None,
+            preview_requested: None,
         }
+    }
+
+    /// Takes the wallpaper the detail pane asked to preview, if any.
+    ///
+    /// Handed up rather than acted on: the library does not own the preview
+    /// or the tab it lives in.
+    pub fn take_preview_request(&mut self) -> Option<Installed> {
+        self.preview_requested.take()
     }
 
     /// Rereads the libraries and the screens.
@@ -122,12 +133,15 @@ impl Library {
         previews: &mut Previews,
         config: &Config,
         backend: Option<&dyn Backend>,
+        sidebar: bool,
     ) {
-        egui::SidePanel::left("screens")
-            .resizable(false)
-            .exact_width(238.0)
-            .frame(theme::panel_frame(theme::Side::Left))
-            .show(ctx, |ui| self.sidebar(ui, previews, config, backend));
+        if sidebar {
+            egui::SidePanel::left("screens")
+                .resizable(false)
+                .exact_width(238.0)
+                .frame(theme::panel_frame(theme::Side::Left))
+                .show(ctx, |ui| self.sidebar(ui, previews, config, backend));
+        }
 
         if let Some(index) = self.selected {
             egui::SidePanel::right("wallpaper")
@@ -167,23 +181,18 @@ impl Library {
         config: &Config,
         backend: Option<&dyn Backend>,
     ) {
-        ui.heading("Screens");
-        ui.add_space(6.0);
-
         if self.screens.is_empty() {
             ui.label(
                 RichText::new(match backend {
                     Some(backend) => format!("{} is not running", backend.name()),
                     None => "No renderer found".to_owned(),
                 })
+                .small()
                 .color(theme::MUTED),
             );
-            ui.add_space(4.0);
-            ui.label(
-                RichText::new("Wallpapers can still be managed; applying needs one.")
-                    .small()
-                    .color(theme::MUTED),
-            );
+        } else {
+            ui.heading("Screens");
+            ui.add_space(6.0);
         }
 
         for screen in self.screens.clone() {
@@ -274,12 +283,11 @@ impl Library {
         ui.add_space(6.0);
         self.settings_panel(ui, backend);
 
-        ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-            if ui.button("Rescan").clicked() {
-                self.refresh(config, backend);
-                self.status = "rescanned".to_owned();
-            }
-        });
+        ui.add_space(10.0);
+        if ui.button("Rescan").clicked() {
+            self.refresh(config, backend);
+            self.status = "rescanned".to_owned();
+        }
     }
 
     /// The settings of the wallpaper that is currently up.
@@ -342,61 +350,7 @@ impl Library {
             .max_height(260.0)
             .show(ui, |ui| {
                 for property in &mut self.settings {
-                    let edited = match &mut property.kind {
-                        properties::Kind::Bool(on) => {
-                            ui.checkbox(on, RichText::new(&property.label).size(12.0))
-                                .changed()
-                        }
-                        properties::Kind::Slider {
-                            value,
-                            min,
-                            max,
-                            step,
-                        } => {
-                            ui.label(RichText::new(&property.label).size(12.0));
-                            ui.add(
-                                egui::Slider::new(value, *min..=*max)
-                                    .step_by(*step)
-                                    .show_value(true),
-                            )
-                            // Dragging fires every frame and each one rebuilds
-                            // the scene, so the value is sent when the drag
-                            // ends rather than during it.
-                            .drag_stopped()
-                        }
-                        properties::Kind::Color(rgb) => {
-                            ui.label(RichText::new(&property.label).size(12.0));
-                            ui.color_edit_button_rgb(rgb).changed()
-                        }
-                        properties::Kind::Combo { value, options } => {
-                            ui.label(RichText::new(&property.label).size(12.0));
-                            let shown = options
-                                .iter()
-                                .find(|(_, option)| option == value)
-                                .map_or_else(|| value.clone(), |(label, _)| label.clone());
-                            let mut picked = false;
-                            egui::ComboBox::from_id_salt(&property.key)
-                                .selected_text(shown)
-                                .width(190.0)
-                                .show_ui(ui, |ui| {
-                                    for (label, option) in options.iter() {
-                                        picked |= ui
-                                            .selectable_value(value, option.clone(), label)
-                                            .clicked();
-                                    }
-                                });
-                            picked
-                        }
-                        properties::Kind::Text(text) => {
-                            ui.label(RichText::new(&property.label).size(12.0));
-                            ui.add(
-                                egui::TextEdit::singleline(text).desired_width(f32::INFINITY),
-                            )
-                            .lost_focus()
-                        }
-                    };
-
-                    if edited {
+                    if crate::widgets::property(ui, property) {
                         changed = Some((property.key.clone(), property.wire()));
                     }
                     ui.add_space(6.0);
@@ -519,6 +473,15 @@ impl Library {
                         self.apply(&screen, &item.dir, backend);
                     }
                 });
+
+                ui.add_space(6.0);
+                if ui
+                    .add_sized([ui.available_width(), 28.0], egui::Button::new("Preview & edit"))
+                    .on_hover_text("Render it off-screen; nothing on your screens changes")
+                    .clicked()
+                {
+                    self.preview_requested = Some(item.clone());
+                }
 
                 ui.add_space(8.0);
                 ui.horizontal_wrapped(|ui| {

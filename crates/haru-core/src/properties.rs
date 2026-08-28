@@ -162,7 +162,7 @@ fn property(key: &str, raw: &serde_json::Value) -> Option<Property> {
         .and_then(serde_json::Value::as_str)
         .map(crate::plain_text)
         .filter(|label| !label.is_empty())
-        .unwrap_or_else(|| pretty(key));
+        .map_or_else(|| pretty(key), |label| readable(&label));
 
     Some(Property {
         key: key.to_owned(),
@@ -203,6 +203,31 @@ fn triple(raw: &str) -> [f32; 3] {
     ]
 }
 
+/// A label fit to put beside a control.
+///
+/// Two things authors leave in one: Wallpaper Engine's own localisation keys,
+/// which the editor resolves and a reader does not, and occasionally the whole
+/// contents of the property as its own label — one observed here is a 200-byte
+/// image URL, which pushes every control below it off the panel.
+fn readable(label: &str) -> String {
+    /// Past this a label is not a label.
+    const LONGEST: usize = 48;
+
+    let looks_like_a_key = label.starts_with("ui_")
+        || (!label.contains(' ') && label.contains('_') && label.is_ascii());
+    let text = if looks_like_a_key {
+        pretty(label)
+    } else {
+        label.to_owned()
+    };
+
+    if text.chars().count() <= LONGEST {
+        return text;
+    }
+    let clipped: String = text.chars().take(LONGEST).collect();
+    format!("{}…", clipped.trim_end())
+}
+
 /// A readable name for a property with no label of its own.
 ///
 /// Wallpaper Engine's own localisation keys look like
@@ -211,7 +236,10 @@ fn triple(raw: &str) -> [f32; 3] {
 fn pretty(key: &str) -> String {
     let trimmed = key
         .strip_prefix("ui_browse_properties_")
+        .or_else(|| key.strip_prefix("ui_editor_properties_"))
+        .or_else(|| key.strip_prefix("ui_editor_effect_"))
         .unwrap_or(key)
+        .trim_end_matches("_title")
         .replace(['_', '-'], " ");
     let mut characters = trimmed.chars();
     characters.next().map_or_else(String::new, |first| {
@@ -305,5 +333,24 @@ mod tests {
     fn a_key_with_no_label_is_made_readable() {
         assert_eq!(pretty("ui_browse_properties_scheme_color"), "Scheme color");
         assert_eq!(pretty("glow_amount"), "Glow amount");
+        assert_eq!(pretty("ui_editor_effect_local_contrast_title"), "Local contrast");
+    }
+
+    #[test]
+    fn a_label_that_is_itself_a_key_is_read_the_same_way() {
+        // Authors put the localisation key in the label field as often as they
+        // leave it out, and the editor resolves it where a reader cannot.
+        assert_eq!(readable("ui_browse_properties_brightness"), "Brightness");
+        assert_eq!(readable("Cursor | 光标"), "Cursor | 光标");
+    }
+
+    #[test]
+    fn a_label_that_is_really_the_value_is_clipped() {
+        // One observed wallpaper labels a property with a 200-byte image URL,
+        // which pushes every control under it off the panel.
+        let long = "img src=http://example.invalid/".repeat(9);
+        let shown = readable(&long);
+        assert!(shown.chars().count() <= 49, "{shown}");
+        assert!(shown.ends_with('…'));
     }
 }

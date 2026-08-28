@@ -162,8 +162,22 @@ impl Settings {
                             .checkbox(&mut config.adult, "Show adult content")
                             .changed();
                         ui.add_space(6.0);
+                        changed |= ui
+                            .checkbox(
+                                &mut config.infinite_scroll,
+                                "Keep loading as I scroll",
+                            )
+                            .on_hover_text(
+                                "Results continue instead of being paged. Numbered pages go away.",
+                            )
+                            .changed();
+                        ui.add_space(6.0);
                         ui.horizontal(|ui| {
-                            ui.label("Results per page");
+                            ui.label(if config.infinite_scroll {
+                                "Results per batch"
+                            } else {
+                                "Results per page"
+                            });
                             changed |= ui
                                 .add(egui::Slider::new(&mut config.per_page, 12..=100))
                                 .drag_stopped();

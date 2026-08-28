@@ -1060,6 +1060,7 @@ dependencies = [
  "haru-core",
  "haru-media",
  "haru-workshop",
+ "image",
  "tapline",
 ]
 

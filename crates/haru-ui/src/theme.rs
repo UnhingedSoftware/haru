@@ -100,7 +100,9 @@ pub fn apply(ctx: &egui::Context) {
     visuals.selection.bg_fill = ACCENT.gamma_multiply(0.45);
     visuals.selection.stroke = Stroke::new(1.0_f32, ACCENT);
 
-    let rounding = Rounding::same(8.0);
+    // Six, not eight: a text field is a wide short box, and a corner that
+    // round eats into the first and last glyph of what is typed in it.
+    let rounding = Rounding::same(6.0);
     visuals.widgets.noninteractive.rounding = rounding;
     visuals.widgets.noninteractive.bg_fill = SURFACE;
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, HAIRLINE);
@@ -140,6 +142,8 @@ pub fn apply(ctx: &egui::Context) {
     // Room to breathe: the default spacing is tuned for dense tool panels, and
     // this is a picker people look at.
     style.spacing.item_spacing = Vec2::new(8.0, 8.0);
+    // Text starts inside the box rather than under its corner.
+    style.spacing.text_edit_width = 200.0;
     style.spacing.button_padding = Vec2::new(10.0, 6.0);
     style.spacing.menu_margin = egui::Margin::same(6.0);
     style.spacing.window_margin = egui::Margin::same(10.0);

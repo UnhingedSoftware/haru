@@ -24,6 +24,12 @@ pub struct Config {
     pub per_page: u32,
     /// Extra Steam libraries to read, for a layout the probe does not know.
     pub extra_libraries: Vec<PathBuf>,
+    /// Whether the browser keeps loading as it is scrolled.
+    ///
+    /// Off by default: numbered pages are where you can say "back to page 4",
+    /// and an endless grid cannot. On, the page strip goes away and results
+    /// simply continue.
+    pub infinite_scroll: bool,
 }
 
 impl Default for Config {
@@ -34,6 +40,7 @@ impl Default for Config {
             adult: false,
             per_page: 24,
             extra_libraries: Vec::new(),
+            infinite_scroll: false,
         }
     }
 }

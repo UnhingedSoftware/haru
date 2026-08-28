@@ -11,15 +11,18 @@
 
 mod app;
 mod library;
+mod preview;
 mod settings;
+mod widgets;
 mod tile;
 pub mod theme;
 
 pub use app::{Haru, Tab};
 pub use library::Library;
+pub use preview::Preview;
 pub use settings::Settings;
 
-use egui::{Align, Layout, RichText};
+use egui::{Align, Layout, RichText, Sense};
 use haru_core::{Filters, TAG_GROUPS, TREND_PERIODS, human_size, plain_text};
 use haru_media::Previews;
 use haru_workshop::{Reply, Request, RequestId, Workshop};
@@ -45,11 +48,12 @@ pub struct Browser {
     /// What the search box holds, which is not a search until Enter.
     typed: String,
     page: Option<BrowsePage>,
-    /// The cursor of each page walked through, so Back works.
+    /// Results kept from earlier pages, when scrolling endlessly.
     ///
-    /// Steam hands out a cursor for the *next* page and nothing for the
-    /// previous one, so going back means remembering where each page started.
-    history: Vec<Option<String>>,
+    /// Empty in paged mode: there, a page replaces the one before it.
+    appended: Vec<BrowseResult>,
+    /// Whether results continue as the grid is scrolled.
+    infinite: bool,
     /// The search whose answer is still wanted.
     ///
     /// Answers arrive in whatever order Steam manages, and a picker changes
@@ -68,12 +72,16 @@ impl Browser {
     }
 
     /// Reruns the search with settings the window has changed.
-    pub fn reconfigure(&mut self, adult: bool, per_page: u32) {
-        if self.filters.adult == adult && self.filters.per_page == per_page {
+    pub fn reconfigure(&mut self, adult: bool, per_page: u32, infinite: bool) {
+        let same = self.filters.adult == adult
+            && self.filters.per_page == per_page
+            && self.infinite == infinite;
+        if same {
             return;
         }
         self.filters.adult = adult;
         self.filters.per_page = per_page;
+        self.infinite = infinite;
         self.search();
     }
 
@@ -91,7 +99,8 @@ impl Browser {
             typed: filters.text.clone(),
             filters,
             page: None,
-            history: vec![None],
+            appended: Vec::new(),
+            infinite: false,
             awaiting,
             status: Status::Searching,
             selected: None,
@@ -99,14 +108,16 @@ impl Browser {
     }
 
     /// Draws a frame.
-    pub fn ui(&mut self, ctx: &egui::Context, previews: &mut Previews) {
+    pub fn ui(&mut self, ctx: &egui::Context, previews: &mut Previews, sidebar: bool) {
         self.collect();
 
-        egui::SidePanel::left("filters")
-            .resizable(false)
-            .exact_width(238.0)
-            .frame(theme::panel_frame(theme::Side::Left))
-            .show(ctx, |ui| self.sidebar(ui));
+        if sidebar {
+            egui::SidePanel::left("filters")
+                .resizable(false)
+                .exact_width(238.0)
+                .frame(theme::panel_frame(theme::Side::Left))
+                .show(ctx, |ui| self.sidebar(ui));
+        }
 
         if let Some(index) = self.selected {
             egui::SidePanel::right("detail")
@@ -135,6 +146,15 @@ impl Browser {
             match reply {
                 Reply::Page(page) => {
                     self.selected = None;
+                    // Endless scrolling keeps what came before; paging
+                    // replaces it, which is the whole difference between them.
+                    if self.infinite && self.filters.page > 1 {
+                        if let Some(previous) = self.page.take() {
+                            self.appended.extend(previous.items);
+                        }
+                    } else {
+                        self.appended.clear();
+                    }
                     self.page = Some(*page);
                     self.status = Status::Idle;
                 }
@@ -146,8 +166,18 @@ impl Browser {
 
     /// Runs the current filters, from the first page.
     fn search(&mut self) {
-        self.filters.cursor = None;
-        self.history = vec![None];
+        self.filters.page = 1;
+        self.appended.clear();
+        self.page = None;
+        self.run();
+    }
+
+    /// Goes to one numbered page.
+    fn go_to(&mut self, page: u32) {
+        if self.awaiting.is_some() || page == self.filters.page {
+            return;
+        }
+        self.filters.page = page.max(1);
         self.run();
     }
 
@@ -248,8 +278,8 @@ impl Browser {
         ui.add_space(4.0);
 
         egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .max_height(ui.available_height() - 76.0)
+            .auto_shrink([false, true])
+            .max_height((ui.available_height() - 64.0).max(120.0))
             .show(ui, |ui| {
                 for (index, group) in TAG_GROUPS.iter().enumerate() {
                     let Some(chosen) = self.filters.chosen.get(index) else {
@@ -313,7 +343,16 @@ impl Browser {
             return;
         };
 
-        if page.items.is_empty() {
+        // In endless mode this is every result loaded so far; in paged mode
+        // the kept list is empty and this is just the page.
+        let items: Vec<BrowseResult> = self
+            .appended
+            .iter()
+            .chain(page.items.iter())
+            .cloned()
+            .collect();
+
+        if items.is_empty() {
             ui.centered_and_justified(|ui| {
                 ui.label(RichText::new("Nothing matched those filters.").weak());
             });
@@ -322,37 +361,59 @@ impl Browser {
 
         // Whatever fits, so a wide window shows more rather than more padding.
         let columns = ((ui.available_width() / (TILE + 12.0)).floor() as usize).max(1);
+        let mut hit_bottom = false;
 
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                let items: Vec<(usize, BrowseResult)> = page
-                    .items
-                    .iter()
-                    .cloned()
-                    .enumerate()
-                    .collect();
-                for row in items.chunks(columns) {
+                for (row, chunk) in items.chunks(columns).enumerate() {
                     ui.horizontal(|ui| {
-                        for (index, found) in row {
-                            let clicked =
-                                tile::show(ui, previews, found, TILE, self.selected == Some(*index));
+                        for (column, found) in chunk.iter().enumerate() {
+                            let index = row * columns + column;
+                            let clicked = tile::show(
+                                ui,
+                                previews,
+                                found,
+                                TILE,
+                                self.selected == Some(index),
+                            );
                             if clicked {
-                                self.selected = Some(*index);
+                                self.selected = Some(index);
                             }
                         }
                     });
                     ui.add_space(10.0);
                 }
+
+                if self.infinite {
+                    // A marker at the end of the list: once it is on screen,
+                    // there is nothing below and the next page is wanted.
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), Sense::hover());
+                    hit_bottom = ui.is_rect_visible(rect);
+                    if self.awaiting.is_some() {
+                        ui.vertical_centered(|ui| ui.spinner());
+                        ui.add_space(8.0);
+                    }
+                }
             });
+
+        if hit_bottom
+            && self.awaiting.is_none()
+            && self.page.as_ref().is_some_and(BrowsePage::has_more)
+        {
+            self.filters.page = self.filters.page.saturating_add(1);
+            self.run();
+        }
     }
 
     /// The detail pane for one result.
     fn detail(&mut self, ui: &mut egui::Ui, previews: &mut Previews, index: usize) {
         let Some(found) = self
-            .page
-            .as_ref()
-            .and_then(|page| page.items.get(index))
+            .appended
+            .iter()
+            .chain(self.page.iter().flat_map(|page| page.items.iter()))
+            .nth(index)
             .cloned()
         else {
             self.selected = None;
@@ -417,10 +478,7 @@ impl Browser {
     fn paging(&mut self, ui: &mut egui::Ui, previews: &mut Previews) {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            let (total, more) = self
-                .page
-                .as_ref()
-                .map_or((0, false), |page| (page.total, page.has_more()));
+            let total = self.page.as_ref().map_or(0, |page| page.total);
 
             match &self.status {
                 Status::Searching => {
@@ -431,35 +489,67 @@ impl Browser {
                     ui.label(RichText::new(why).color(ui.visuals().error_fg_color));
                 }
                 Status::Idle => {
-                    let page = self.history.len();
-                    ui.label(format!("{} matches · page {page}", thousands(u64::from(total))));
+                    ui.label(format!("{} matches", thousands(u64::from(total))));
                     if previews.loading() > 0 {
                         ui.weak(format!("· {} previews loading", previews.loading()));
                     }
                 }
             }
 
+            // Endless scrolling has no pages to number, and a strip that said
+            // "page 3 of 400" beside a grid that never ends would be a lie.
+            if self.infinite {
+                let shown = self.appended.len()
+                    + self.page.as_ref().map_or(0, |page| page.items.len());
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.weak(format!("{} loaded", thousands(shown as u64)));
+                });
+                return;
+            }
+
+            let pages = self.filters.pages(total);
+            let current = self.filters.page;
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let waiting = self.awaiting.is_some();
+                let mut jump = None;
+
                 if ui
-                    .add_enabled(more && !waiting, egui::Button::new("Next ›"))
+                    .add_enabled(current < pages && !waiting, egui::Button::new("›"))
                     .clicked()
-                    && let Some(next) = self
-                        .page
-                        .as_ref()
-                        .and_then(|page| page.next_cursor.clone())
                 {
-                    self.history.push(Some(next.clone()));
-                    self.filters.cursor = Some(next);
-                    self.run();
+                    jump = Some(current.saturating_add(1));
                 }
+
+                // Right to left, so the numbers are built backwards and read
+                // forwards.
+                for number in strip(current, pages).into_iter().rev() {
+                    match number {
+                        Some(number) if number == current => {
+                            let _ = ui.selectable_label(true, RichText::new(number.to_string()));
+                        }
+                        Some(number) => {
+                            if ui
+                                .add_enabled(!waiting, egui::Button::new(number.to_string()))
+                                .clicked()
+                            {
+                                jump = Some(number);
+                            }
+                        }
+                        None => {
+                            ui.weak("…");
+                        }
+                    }
+                }
+
                 if ui
-                    .add_enabled(self.history.len() > 1 && !waiting, egui::Button::new("‹ Back"))
+                    .add_enabled(current > 1 && !waiting, egui::Button::new("‹"))
                     .clicked()
                 {
-                    self.history.pop();
-                    self.filters.cursor = self.history.last().cloned().flatten();
-                    self.run();
+                    jump = Some(current.saturating_sub(1));
+                }
+
+                if let Some(page) = jump {
+                    self.go_to(page);
                 }
             });
         });
@@ -498,6 +588,46 @@ fn period_label(days: Option<u32>) -> String {
     )
 }
 
+/// Which page numbers to show around the current one.
+///
+/// `None` is a gap. Wallpaper Engine's Workshop is 130,000 pages of twenty-four,
+/// so every number is not an option and the ends have to be reachable anyway:
+/// the first, the last, and a window around where you are.
+fn strip(current: u32, pages: u32) -> Vec<Option<u32>> {
+    /// How many either side of the current page.
+    const AROUND: u32 = 2;
+
+    if pages <= 1 {
+        return vec![Some(1)];
+    }
+
+    let first_shown = current.saturating_sub(AROUND).max(1);
+    let last_shown = current.saturating_add(AROUND).min(pages);
+
+    let mut out = Vec::new();
+    if first_shown > 1 {
+        out.push(Some(1));
+        // A gap of exactly one page is worth spelling out rather than hiding.
+        if first_shown > 3 {
+            out.push(None);
+        } else if first_shown == 3 {
+            out.push(Some(2));
+        }
+    }
+    for number in first_shown..=last_shown {
+        out.push(Some(number));
+    }
+    if last_shown < pages {
+        if last_shown + 2 < pages {
+            out.push(None);
+        } else if last_shown + 2 == pages {
+            out.push(Some(pages - 1));
+        }
+        out.push(Some(pages));
+    }
+    out
+}
+
 /// A count with separators, because six digits are unreadable without them.
 fn thousands(value: u64) -> String {
     let digits = value.to_string();
@@ -514,6 +644,40 @@ fn thousands(value: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_page_strip_always_reaches_both_ends() {
+        // Whatever the window shows, page one and the last page must be one
+        // click away, or a deep search is a trap.
+        for (current, pages) in [(1_u32, 1_u32), (1, 9), (5, 9), (60, 132_618), (132_618, 132_618)] {
+            let shown: Vec<u32> = strip(current, pages).into_iter().flatten().collect();
+            assert!(shown.contains(&1), "no first page at {current}/{pages}");
+            assert!(shown.contains(&pages), "no last page at {current}/{pages}");
+            assert!(shown.contains(&current), "no current page at {current}/{pages}");
+        }
+    }
+
+    #[test]
+    fn the_strip_stays_short_however_deep_the_results_go() {
+        // 132,618 pages is a real number for this Workshop; the strip has to
+        // be a fixed width regardless.
+        assert!(strip(60_000, 132_618).len() <= 9);
+    }
+
+    #[test]
+    fn a_gap_of_one_page_is_shown_rather_than_hidden() {
+        // "1 … 3 4 5" hides exactly one number behind an ellipsis that costs
+        // more space than the number would.
+        let shown = strip(4, 20);
+        assert_eq!(shown.first(), Some(&Some(1)));
+        assert_eq!(shown.get(1), Some(&Some(2)), "{shown:?}");
+    }
+
+    #[test]
+    fn a_single_page_is_just_itself() {
+        assert_eq!(strip(1, 1), vec![Some(1)]);
+        assert_eq!(strip(1, 0), vec![Some(1)]);
+    }
 
     #[test]
     fn counts_are_grouped_the_way_they_are_read() {
