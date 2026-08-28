@@ -3,15 +3,17 @@ name: Release
 # Actions -> Release -> Run workflow (optionally type a version; blank = auto
 # from Conventional Commits).
 #
-# It computes the version and changelog, gates on the full test suite, builds
-# the binary and creates the draft with it attached in one shot.
+# One job on purpose. The obvious shape is prepare -> test -> build -> release,
+# passing the changelog and the binary between them as artifacts — and that
+# shape stops working the moment the account's Actions artifact storage is
+# full. Nothing here needs to outlive the job that made it.
 #
 # Artifact: one standalone executable — download, chmod +x, run.
 #   haru-linux-x86_64
 #
 # No Windows or macOS artifact yet. The code is written to build there — only
-# haru-apply knows a platform — but neither is built or run in CI, and
-# shipping a binary nobody has started would be a guess.
+# haru-apply knows a platform — but neither is built or run in CI, and shipping
+# a binary nobody has started would be a guess.
 on:
   workflow_dispatch:
     inputs:
@@ -27,21 +29,45 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # 1. Version + changelog, published as an artifact the release job reads.
-  prepare:
+  release:
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
+          path: haru
+          # git-cliff reads the history to work out the version and the notes.
           fetch-depth: 0
+      # haru depends on tapline by path, so both are checked out side by side —
+      # the same layout a developer has. A private tapline needs a token in
+      # TAPLINE_TOKEN; without one this fails plainly rather than the build
+      # failing later with a confusing missing-crate error.
+      - uses: actions/checkout@v4
+        with:
+          repository: UnhingedSoftware/tapline
+          token: ${{ secrets.TAPLINE_TOKEN || github.token }}
+          path: tapline
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: haru
       - name: Install git-cliff
         uses: taiki-e/install-action@v2
         with:
           tool: git-cliff
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libwayland-dev libxkbcommon-dev libxcb1-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev
+
       - name: Compute version
         id: version
+        working-directory: haru
         run: |
           set -euo pipefail
           input="${{ inputs.version }}"
@@ -54,70 +80,23 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Release version: $version"
-      - name: Generate changelog
-        run: git cliff --unreleased --tag "${{ steps.version.outputs.version }}" --strip all -o RELEASE_NOTES.md
-      - name: Upload changelog
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-notes
-          path: RELEASE_NOTES.md
-          if-no-files-found: error
 
-  # 2. Test gate: nothing ships from a tree with failing tests.
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          path: haru
-      - uses: actions/checkout@v4
-        with:
-          repository: UnhingedSoftware/tapline
-          token: ${{ secrets.TAPLINE_TOKEN || github.token }}
-          path: tapline
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: haru
-      - name: Install system dependencies
+      - name: Generate changelog
+        working-directory: haru
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config \
-            libwayland-dev libxkbcommon-dev libxcb1-dev \
-            libx11-dev libxcursor-dev libxi-dev libxrandr-dev
+          set -euo pipefail
+          git cliff --unreleased --tag "${{ steps.version.outputs.version }}" --strip all -o RELEASE_NOTES.md
+          # A release with no notes is a release nobody can read.
+          test -s RELEASE_NOTES.md || echo "Initial release." > RELEASE_NOTES.md
+
+      # The gate: nothing ships from a tree with failing tests.
       - run: cargo test --workspace
         working-directory: haru
-
-  # 3. The binary.
-  build:
-    needs: [prepare, test]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          path: haru
-      - uses: actions/checkout@v4
-        with:
-          repository: UnhingedSoftware/tapline
-          token: ${{ secrets.TAPLINE_TOKEN || github.token }}
-          path: tapline
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: haru
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config \
-            libwayland-dev libxkbcommon-dev libxcb1-dev \
-            libx11-dev libxcursor-dev libxi-dev libxrandr-dev
 
       - name: Set crate version
         working-directory: haru
         run: |
-          v="${{ needs.prepare.outputs.version }}"; v="${v#v}"
+          v="${{ steps.version.outputs.version }}"; v="${v#v}"
           sed -i -E "0,/^version = \"[0-9]+\.[0-9]+\.[0-9]+\"/s//version = \"$v\"/" Cargo.toml
 
       - run: cargo build --release -p haru
@@ -130,31 +109,13 @@ jobs:
           chmod +x haru-linux-x86_64
           ls -la haru-linux-x86_64
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: artifacts
-          path: haru-linux-x86_64
-          if-no-files-found: error
-
-  # 4. One draft, everything attached.
-  release:
-    needs: [prepare, build]
-    runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-      V: ${{ needs.prepare.outputs.version }}
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: release-notes
-      - uses: actions/download-artifact@v4
-        with:
-          name: artifacts
       - name: Create or update the draft
+        env:
+          V: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           files=haru-linux-x86_64
+          cp haru/RELEASE_NOTES.md .
           cat >> RELEASE_NOTES.md <<'EOF'
 
           ## Downloads
@@ -168,8 +129,6 @@ jobs:
           need kirie.
 
           EOF
-          # API-only: there is no checkout in this job, so `create` is given an
-          # explicit target commit.
           if gh release view "$V" >/dev/null 2>&1; then
             echo "release $V exists — updating in place"
             gh release edit "$V" --draft --title "$V" --notes-file RELEASE_NOTES.md
