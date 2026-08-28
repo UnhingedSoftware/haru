@@ -58,6 +58,15 @@ impl Tab {
 }
 
 /// The whole application.
+/// What a renderer thread was asked to do, so its answer is read as that.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Job {
+    /// Start one, or replace the running one.
+    Start,
+    /// Stop the running one.
+    Stop,
+}
+
 pub struct Haru {
     tab: Tab,
     previews: Previews,
@@ -78,11 +87,11 @@ pub struct Haru {
     account: Account,
     /// The offer to install a renderer, on a machine with none.
     installer: crate::renderer::Installer,
-    /// A renderer being started, until it answers or gives up.
+    /// Renderer work in flight, and which kind it is.
     ///
     /// On a thread because starting one means waiting for it to build the
     /// first scene, which is seconds, and the window keeps drawing meanwhile.
-    starting: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    starting: Option<(Job, std::sync::mpsc::Receiver<Result<(), String>>)>,
     /// The connection everything Steam-shaped goes over.
     workshop: Rc<Workshop>,
     /// The request that asks who is signed in, while it is outstanding.
@@ -263,6 +272,9 @@ impl Haru {
                 if asked.install {
                     self.installer.offer();
                 }
+                if let Some(what) = asked.renderer {
+                    self.manage_renderer(ctx, what);
+                }
                 if asked.sign_out {
                     self.sign_out_request = Some(self.workshop.send(Request::SignOut));
                 }
@@ -285,6 +297,12 @@ impl Haru {
         // something, not a failure.
         if let Some((screen, dir)) = self.library.take_pending() {
             self.start_renderer(ctx, &screen, &dir);
+        }
+        // What a running engine was told to show, remembered for the next one
+        // it is started as.
+        if let Some((screen, dir)) = self.library.take_applied() {
+            self.config.screens.insert(screen, dir);
+            let _ = self.config.save();
         }
         self.collect_renderer(ctx);
 
@@ -311,10 +329,67 @@ impl Haru {
         self.finish_frame();
     }
 
-    /// Starts an engine on this wallpaper, if there is one to start.
+    /// What the engine should own, and what should be on each screen.
     ///
-    /// One engine serves every screen, so an engine somebody else started is
-    /// left alone: a second would fight the first for the same socket.
+    /// One engine owns every screen, so a relaunch has to put back what the
+    /// others were showing — otherwise changing the wallpaper on a second
+    /// monitor clears the first. Three sources, in order of how current they
+    /// are: what a running engine says is up, what haru last put there, and
+    /// nothing.
+    fn plan_for(&self, screen: &str, dir: &std::path::Path) -> Vec<haru_apply::launch::Plan> {
+        let mut names: Vec<String> = Vec::new();
+        let mut showing: Vec<(String, std::path::PathBuf)> = Vec::new();
+
+        if let Some(backend) = self.backend.as_deref()
+            && let Ok(live) = backend.screens()
+        {
+            for found in live {
+                names.push(found.name.clone());
+                if let Some(current) = found.current {
+                    showing.push((found.name, current));
+                }
+            }
+        }
+        for name in haru_apply::launch::connectors() {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        // The screen being applied to may be neither: an output the kernel
+        // reports as disconnected can still be the one somebody chose.
+        if !names.iter().any(|name| name == screen) {
+            names.push(screen.to_owned());
+        }
+
+        names
+            .into_iter()
+            .map(|name| {
+                if name == screen {
+                    return haru_apply::launch::Plan::showing(name, dir);
+                }
+                let wallpaper = showing
+                    .iter()
+                    .find(|(had, _)| *had == name)
+                    .map(|(_, wallpaper)| wallpaper.clone())
+                    .or_else(|| self.config.screens.get(&name).cloned())
+                    // A remembered wallpaper that has since been deleted would
+                    // make the whole launch fatal, so it is dropped instead.
+                    .filter(|wallpaper| wallpaper.is_dir());
+                haru_apply::launch::Plan {
+                    screen: name,
+                    wallpaper,
+                }
+            })
+            .collect()
+    }
+
+    /// Starts — or relaunches — the one engine, owning this screen.
+    ///
+    /// One engine serves every screen. When one is already running, this is
+    /// the case where it does not own the screen being applied to, and a
+    /// screen cannot be handed over: it is declared when the engine starts.
+    /// So the engine is replaced by one owning the union, still showing
+    /// whatever was on the others.
     fn start_renderer(&mut self, ctx: &egui::Context, screen: &str, dir: &std::path::Path) {
         if self.starting.is_some() {
             return;
@@ -328,45 +403,106 @@ impl Haru {
         let socket = haru_apply::Kirie::new(self.config.socket.clone())
             .socket()
             .to_path_buf();
-        if haru_apply::launch::running() {
-            self.library.say(format!(
-                "a renderer is running but not answering on {}",
-                socket.display()
-            ));
-            return;
-        }
 
+        let plan = self.plan_for(screen, dir);
+        // Running already means it is being replaced rather than started, and
+        // that is worth saying: every screen goes dark for as long as the
+        // first scene takes to build.
+        let replacing = haru_apply::launch::running();
         let (answer, heard) = std::sync::mpsc::channel();
-        let (screen, dir) = (screen.to_owned(), dir.to_owned());
         let ctx = ctx.clone();
         let spawned = std::thread::Builder::new()
             .name("haru-start-renderer".to_owned())
             .spawn(move || {
-                let _ = answer.send(haru_apply::launch::start(&binary, &socket, &screen, &dir));
+                let outcome = if replacing {
+                    haru_apply::launch::restart(&binary, &socket, &plan)
+                } else {
+                    haru_apply::launch::start(&binary, &socket, &plan)
+                };
+                let _ = answer.send(outcome);
                 ctx.request_repaint();
             });
 
         if spawned.is_ok() {
-            self.starting = Some(heard);
-            self.library.say("starting the renderer\u{2026}");
+            self.starting = Some((Job::Start, heard));
+            self.config
+                .screens
+                .insert(screen.to_owned(), dir.to_owned());
+            let _ = self.config.save();
+            self.library.say(if replacing {
+                "restarting the renderer for that screen\u{2026}"
+            } else {
+                "starting the renderer\u{2026}"
+            });
         } else {
             self.library.say("could not start the renderer");
         }
     }
 
-    /// Takes the answer from a renderer that was being started.
+    /// Does what the settings pane asked of the renderer.
+    fn manage_renderer(&mut self, ctx: &egui::Context, asked: crate::settings::Renderer) {
+        use crate::settings::Renderer;
+
+        match asked {
+            // Both go through the same path: it starts one when none is
+            // running and replaces the running one when there is.
+            Renderer::Start | Renderer::Restart => {
+                // The engine cannot start without a wallpaper, and the only
+                // one it can be given here is what was last on a screen.
+                let last = self
+                    .config
+                    .screens
+                    .iter()
+                    .find(|(_, wallpaper)| wallpaper.is_dir())
+                    .map(|(screen, wallpaper)| (screen.clone(), wallpaper.clone()));
+                match last {
+                    Some((screen, wallpaper)) => self.start_renderer(ctx, &screen, &wallpaper),
+                    None => self
+                        .library
+                        .say("pick a wallpaper — an engine cannot start without one"),
+                }
+            }
+            Renderer::Stop => self.stop_renderer(ctx),
+        }
+    }
+
+    /// Stops the running engine, off the drawing thread.
+    fn stop_renderer(&mut self, ctx: &egui::Context) {
+        if self.starting.is_some() {
+            return;
+        }
+        let (answer, heard) = std::sync::mpsc::channel();
+        let ctx = ctx.clone();
+        let spawned = std::thread::Builder::new()
+            .name("haru-stop-renderer".to_owned())
+            .spawn(move || {
+                let _ = answer.send(haru_apply::launch::stop());
+                ctx.request_repaint();
+            });
+        if spawned.is_ok() {
+            self.starting = Some((Job::Stop, heard));
+            self.library.say("stopping the renderer\u{2026}");
+        }
+    }
+
+    /// Takes the answer from renderer work that was in flight.
     fn collect_renderer(&mut self, ctx: &egui::Context) {
-        let Some(heard) = self.starting.as_ref() else {
+        let Some((job, heard)) = self.starting.as_ref() else {
             return;
         };
+        let job = *job;
         match heard.try_recv() {
             Ok(Ok(())) => {
                 self.starting = None;
-                // It came up on the wallpaper it was started for, so there is
-                // nothing left to apply — only a backend to notice.
+                // Whatever happened, the backend is a different answer now.
                 self.backend = haru_apply::detect(self.config.socket.clone());
                 self.library.refresh(&self.config, self.backend.as_deref());
-                self.library.say("the renderer is up");
+                self.library.say(match job {
+                    // It came up on the wallpaper it was started for, so there
+                    // is nothing left to apply — only a backend to notice.
+                    Job::Start => "the renderer is up",
+                    Job::Stop => "the renderer is stopped",
+                });
             }
             Ok(Err(why)) => {
                 self.starting = None;

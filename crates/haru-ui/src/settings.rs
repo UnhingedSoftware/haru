@@ -10,6 +10,17 @@ use haru_core::Config;
 
 use crate::theme;
 
+/// Something to do to the renderer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Renderer {
+    /// Start one, owning every screen.
+    Start,
+    /// Replace the running one.
+    Restart,
+    /// Stop the running one.
+    Stop,
+}
+
 /// What the settings pane was asked for while it was drawn.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Actions {
@@ -21,6 +32,8 @@ pub struct Actions {
     pub sign_out: bool,
     /// Whether to offer installing a renderer.
     pub install: bool,
+    /// What to do to the renderer, if anything.
+    pub renderer: Option<Renderer>,
 }
 
 /// The settings pane.
@@ -114,20 +127,88 @@ impl Settings {
                         ui.add_space(18.0);
                         ui.label(RichText::new("Renderer").strong());
                         ui.add_space(4.0);
-                        match backend {
-                            Some(backend) if backend.available() => {
+
+                        // The socket is the authority on whether it is running:
+                        // it is what haru talks to. The process is looked up
+                        // for what only a process can answer — which pid, and
+                        // whether it can be signalled to stop.
+                        let engine = haru_apply::launch::pid();
+                        let answering = backend.is_some_and(Backend::available);
+
+                        match (answering, engine) {
+                            (true, _) => {
+                                let name = backend.map_or("The renderer", Backend::name);
                                 ui.label(
-                                    RichText::new(format!("{} is running", backend.name()))
-                                        .color(theme::ACCENT),
+                                    RichText::new(match engine {
+                                        Some(pid) => format!("{name} is running · pid {pid}"),
+                                        None => format!("{name} is running"),
+                                    })
+                                    .color(theme::ACCENT),
                                 );
+                                // Which screens it owns, because that is what
+                                // decides whether a wallpaper can go on one
+                                // without restarting it.
+                                if let Some(Ok(screens)) = backend.map(Backend::screens) {
+                                    let names: Vec<&str> =
+                                        screens.iter().map(|screen| screen.name.as_str()).collect();
+                                    if !names.is_empty() {
+                                        ui.add_space(2.0);
+                                        ui.label(
+                                            RichText::new(format!("owns {}", names.join(", ")))
+                                                .small()
+                                                .color(theme::MUTED),
+                                        );
+                                    }
+                                }
+                                ui.add_space(6.0);
+                                ui.horizontal(|ui| {
+                                    if ui
+                                        .button("Restart")
+                                        .on_hover_text(
+                                            "Replaces it with one owning every screen this \
+                                             machine has",
+                                        )
+                                        .clicked()
+                                    {
+                                        actions.renderer = Some(Renderer::Restart);
+                                    }
+                                    // Stopping is a signal, so it needs the
+                                    // process, not the socket.
+                                    if engine.is_some() {
+                                        if ui
+                                            .button(RichText::new("Stop").color(theme::DANGER))
+                                            .on_hover_text(
+                                                "Leaves every screen without a wallpaper",
+                                            )
+                                            .clicked()
+                                        {
+                                            actions.renderer = Some(Renderer::Stop);
+                                        }
+                                    } else {
+                                        ui.label(
+                                            RichText::new("its process was not found, so it \
+                                                           cannot be stopped from here")
+                                                .small()
+                                                .color(theme::MUTED),
+                                        );
+                                    }
+                                });
                             }
-                            Some(backend) => {
+                            (false, Some(pid)) => {
+                                // A process without a socket: started without
+                                // one, or still coming up.
                                 ui.label(
-                                    RichText::new(format!("{} is not answering", backend.name()))
-                                        .color(theme::MUTED),
+                                    RichText::new(format!(
+                                        "kirie is running as pid {pid} but not answering"
+                                    ))
+                                    .color(theme::MUTED),
                                 );
+                                ui.add_space(6.0);
+                                if ui.button(RichText::new("Stop").color(theme::DANGER)).clicked() {
+                                    actions.renderer = Some(Renderer::Stop);
+                                }
                             }
-                            None if haru_apply::install::installed().is_some() => {
+                            (false, None) if haru_apply::install::installed().is_some() => {
                                 ui.label(
                                     RichText::new(
                                         "kirie is installed but not running. Wallpapers can be \
@@ -135,8 +216,19 @@ impl Settings {
                                     )
                                     .color(theme::MUTED),
                                 );
+                                ui.add_space(6.0);
+                                if ui
+                                    .button("Start")
+                                    .on_hover_text(
+                                        "One engine owning every screen, showing what was on \
+                                         them last",
+                                    )
+                                    .clicked()
+                                {
+                                    actions.renderer = Some(Renderer::Start);
+                                }
                             }
-                            None => {
+                            (false, None) => {
                                 ui.label(
                                     RichText::new(
                                         "No renderer found. Wallpapers can still be browsed and installed.",

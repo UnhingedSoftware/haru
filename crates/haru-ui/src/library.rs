@@ -82,6 +82,15 @@ pub struct Library {
     workshop: std::rc::Rc<Workshop>,
     /// The unsubscribe in flight, so its failure lands here and not elsewhere.
     unsubscribing: Option<haru_workshop::RequestId>,
+    /// The screens the engine actually owns.
+    ///
+    /// Not the same list as `screens`, and the difference decides everything:
+    /// a `bg` for a screen the engine was not started with is accepted and
+    /// draws nothing, because there is no surface on that output to draw on.
+    /// Putting a wallpaper there needs the engine relaunched owning it.
+    owned: Vec<String>,
+    /// What was just put on a screen, for whoever remembers such things.
+    applied: Option<(String, PathBuf)>,
     /// A wallpaper picked while nothing was rendering.
     ///
     /// kirie takes its first wallpaper on the command line, so a click with no
@@ -122,6 +131,8 @@ impl Library {
             target: None,
             screens: Vec::new(),
             status: String::new(),
+            owned: Vec::new(),
+            applied: None,
             pending: None,
             confirming: None,
             settings: Vec::new(),
@@ -160,21 +171,24 @@ impl Library {
     /// Rereads the libraries and the screens.
     pub fn refresh(&mut self, config: &Config, backend: Option<&dyn Backend>) {
         self.items = library::scan(&config.libraries());
-        self.screens = backend
+        let live: Vec<Screen> = backend
             .map(|backend| backend.screens().unwrap_or_default())
-            .filter(|screens| !screens.is_empty())
-            // No engine to ask, so the kernel is asked instead. An engine has
-            // to be told which output to own when it starts, which is exactly
-            // when there is none to name them.
-            .unwrap_or_else(|| {
-                haru_apply::launch::connectors()
-                    .into_iter()
-                    .map(|name| Screen {
-                        name,
-                        current: None,
-                    })
-                    .collect()
-            });
+            .unwrap_or_default();
+        self.owned = live.iter().map(|screen| screen.name.clone()).collect();
+
+        // Every screen the machine has, whether or not the engine owns it: an
+        // engine has to be told which outputs to own when it starts, which is
+        // exactly when there is no engine to name them. The ones it does own
+        // keep what it says is on them.
+        self.screens = live;
+        for name in haru_apply::launch::connectors() {
+            if !self.screens.iter().any(|screen| screen.name == name) {
+                self.screens.push(Screen {
+                    name,
+                    current: None,
+                });
+            }
+        }
         if self.target.is_none() {
             self.target = self.screens.first().map(|screen| screen.name.clone());
         }
@@ -647,6 +661,11 @@ impl Library {
         self.apply(&screen, dir, backend);
     }
 
+    /// Takes what was last put on a screen, so it can be remembered.
+    pub fn take_applied(&mut self) -> Option<(String, PathBuf)> {
+        self.applied.take()
+    }
+
     /// Takes the wallpaper waiting for an engine to be started for it.
     pub fn take_pending(&mut self) -> Option<(String, PathBuf)> {
         self.pending.take()
@@ -745,10 +764,16 @@ impl Library {
 
     /// Applies one wallpaper and records what happened.
     fn apply(&mut self, screen: &str, dir: &std::path::Path, backend: Option<&dyn Backend>) {
-        let Some(backend) = backend else {
-            // Nothing is rendering, which is a thing that can be fixed rather
-            // than reported: whoever owns this view starts an engine on this
-            // wallpaper. Saying so here would be guessing at the outcome.
+        // Nothing rendering, or nothing rendering *there*: either way this is
+        // a thing that can be fixed rather than reported, and whoever owns
+        // this view starts or relaunches an engine owning that screen. Saying
+        // so here would be guessing at the outcome.
+        //
+        // The ownership check is not caution: the engine accepts a `bg` for a
+        // screen it was not started with, loads the wallpaper and answers
+        // `ok`, and nothing appears — there is no surface on that output.
+        let owns = self.owned.iter().any(|name| name == screen);
+        let Some(backend) = backend.filter(|_| owns) else {
             self.pending = Some((screen.to_owned(), dir.to_owned()));
             return;
         };
@@ -774,6 +799,7 @@ impl Library {
                 {
                     found.current = Some(dir.to_owned());
                 }
+                self.applied = Some((screen.to_owned(), dir.to_owned()));
                 format!("applied to {screen}")
             }
             Err(why) => why,

@@ -4,6 +4,7 @@
 //! working default: a config that fails to load is a config that gets replaced
 //! by defaults, never a reason to refuse to start.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -24,6 +25,13 @@ pub struct Config {
     pub per_page: u32,
     /// Extra Steam libraries to read, for a layout the probe does not know.
     pub extra_libraries: Vec<PathBuf>,
+    /// What was last put on each screen, by output name.
+    ///
+    /// The engine is told which screens to own and what to show on them when
+    /// it starts, and it is the only thing that knows what is up — so when it
+    /// is not running there is nobody to ask. This is that memory: a restart
+    /// puts back what was there rather than the same wallpaper everywhere.
+    pub screens: BTreeMap<String, PathBuf>,
     /// Which kirie build to fetch: `webkit` or `cef`. `None` until one is
     /// chosen, which is also how a first run is recognised.
     pub renderer_web: Option<String>,
@@ -48,6 +56,7 @@ impl Default for Config {
             adult: false,
             per_page: 24,
             extra_libraries: Vec::new(),
+            screens: BTreeMap::new(),
             renderer_web: None,
             offer_renderer: true,
             infinite_scroll: false,
