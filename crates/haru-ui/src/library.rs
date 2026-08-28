@@ -607,11 +607,15 @@ fn tile(
             ui.painter()
                 .rect_filled(rect, rounding, ui.visuals().extreme_bg_color);
 
-            match item
-                .preview
-                .as_ref()
-                .and_then(|path| previews.texture_path(ui.ctx(), path))
-            {
+            // Only while it is on screen: a tile scrolled past stops asking,
+            // and the sweep drops what nothing asked for.
+            let picture = ui.is_rect_visible(rect).then(|| {
+                item.preview
+                    .as_ref()
+                    .and_then(|path| previews.texture_path(ui.ctx(), path))
+            });
+
+            match picture.flatten() {
                 Some(texture) => {
                     egui::Image::new(&texture)
                         .rounding(rounding)

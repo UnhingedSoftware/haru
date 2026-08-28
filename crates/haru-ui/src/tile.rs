@@ -42,14 +42,20 @@ pub fn show(
                 ui.painter()
                     .rect_filled(rect, rounding, ui.visuals().extreme_bg_color);
 
-                // The cache is asked every frame on purpose: the grid does not
-                // track what it already has, and asking is what starts the
-                // fetch.
-                match found
-                    .preview_url
-                    .as_deref()
-                    .and_then(|url| previews.texture(ui.ctx(), url))
-                {
+                // Asked for every frame it is *visible*, and never otherwise.
+                // The grid does not track what it already has — asking is what
+                // starts a fetch and what keeps a picture from being swept —
+                // so a tile scrolled off the screen stops asking and its
+                // picture goes. A page of a hundred results then costs the
+                // dozen on screen rather than the hundred.
+                let picture = ui.is_rect_visible(rect).then(|| {
+                    found
+                        .preview_url
+                        .as_deref()
+                        .and_then(|url| previews.texture(ui.ctx(), url))
+                });
+
+                match picture.flatten() {
                     Some(texture) => {
                         egui::Image::new(&texture)
                             .rounding(rounding)

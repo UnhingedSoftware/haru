@@ -28,13 +28,20 @@ const IN_FLIGHT: usize = 6;
 /// Twice the tile so a preview stays sharp on a HiDPI screen, and no more.
 const MAX_EDGE: u32 = 320;
 
-/// How many decoded previews to keep.
+/// How many decoded previews to keep at the very most.
 ///
-/// Every tile ever scrolled past would otherwise stay resident: a decoded
-/// preview is up to 320x320 RGBA, about 400 KB, so a few hundred pages of
-/// browsing is hundreds of megabytes of pictures nobody is looking at. Ten
-/// pages' worth is enough that scrolling back is instant.
+/// A backstop under [`IDLE_FRAMES`], not the main limit: a preview is up to
+/// 320x320 RGBA, about 400 KB, so even a few hundred is worth capping.
 const KEEP: usize = 240;
+
+/// How many frames a picture may go unasked-for before it is dropped.
+///
+/// The real limit. A grid asks for exactly what it is drawing, every frame, so
+/// anything that stops being asked for has been scrolled past or belongs to a
+/// tab that is no longer showing — and a texture nobody draws is memory spent
+/// on nothing. About two seconds at sixty frames a second, which is long
+/// enough that scrolling up and down does not re-fetch what it just had.
+const IDLE_FRAMES: u64 = 120;
 
 /// Refuse anything larger, before decoding it.
 ///
@@ -46,8 +53,8 @@ const MAX_BYTES: usize = 10 * 1024 * 1024;
 enum State {
     /// Being fetched.
     Loading,
-    /// Ready to draw.
-    Ready(egui::TextureHandle),
+    /// Ready to draw, and the frame it was last drawn on.
+    Ready(egui::TextureHandle, u64),
     /// Not coming: a dead link, a refusal, an undecodable body.
     Failed,
 }
@@ -67,6 +74,8 @@ pub struct Previews {
     active: Arc<Mutex<usize>>,
     inbound: Receiver<Decoded>,
     outbound: Sender<Decoded>,
+    /// Which frame is being drawn, for deciding what has gone unused.
+    frame: u64,
 }
 
 impl Default for Previews {
@@ -87,6 +96,7 @@ impl Previews {
             active: Arc::new(Mutex::new(0)),
             inbound,
             outbound,
+            frame: 0,
         }
     }
 
@@ -98,8 +108,14 @@ impl Previews {
     pub fn texture(&mut self, ctx: &egui::Context, url: &str) -> Option<egui::TextureHandle> {
         self.drain(ctx);
 
-        match self.entries.get(url) {
-            Some(State::Ready(texture)) => return Some(texture.clone()),
+        // Asking is what keeps a picture alive: the sweep drops whatever the
+        // last couple of seconds of drawing did not ask for.
+        let now = self.frame;
+        match self.entries.get_mut(url) {
+            Some(State::Ready(texture, seen)) => {
+                *seen = now;
+                return Some(texture.clone());
+            }
             Some(State::Loading | State::Failed) => return None,
             None => {}
         }
@@ -126,8 +142,12 @@ impl Previews {
         let key = path.to_string_lossy().into_owned();
         self.drain(ctx);
 
-        match self.entries.get(&key) {
-            Some(State::Ready(texture)) => return Some(texture.clone()),
+        let now = self.frame;
+        match self.entries.get_mut(&key) {
+            Some(State::Ready(texture, seen)) => {
+                *seen = now;
+                return Some(texture.clone());
+            }
             Some(State::Loading | State::Failed) => return None,
             None => {}
         }
@@ -161,6 +181,26 @@ impl Previews {
         }
     }
 
+    /// Ends a frame, dropping every picture that frame did not draw.
+    ///
+    /// Called once per frame by the window. Without it a browser holds every
+    /// tile it has ever shown; with it, memory follows what is on screen.
+    pub fn sweep(&mut self) {
+        self.frame = self.frame.saturating_add(1);
+        let now = self.frame;
+
+        self.entries.retain(|_, state| match state {
+            // Still on its way: dropping it would let its worker finish into
+            // an entry nothing asked for.
+            State::Loading => true,
+            State::Ready(_, seen) => now.saturating_sub(*seen) <= IDLE_FRAMES,
+            // A dead link is remembered so it is not fetched again every
+            // frame, and it costs one entry rather than a picture.
+            State::Failed => true,
+        });
+        self.order.retain(|key| self.entries.contains_key(key));
+    }
+
     /// How many previews are kept.
     #[must_use]
     pub fn held(&self) -> usize {
@@ -181,9 +221,13 @@ impl Previews {
     /// Uploading happens here rather than on the worker because a texture
     /// belongs to the render context, which is not this thread's to touch.
     fn drain(&mut self, ctx: &egui::Context) {
+        let now = self.frame;
         while let Ok(Decoded { url, image }) = self.inbound.try_recv() {
             let state = image.map_or(State::Failed, |image| {
-                State::Ready(ctx.load_texture(&url, image, egui::TextureOptions::LINEAR))
+                State::Ready(
+                    ctx.load_texture(&url, image, egui::TextureOptions::LINEAR),
+                    now,
+                )
             });
             self.entries.insert(url, state);
             if let Ok(mut active) = self.active.lock() {
@@ -281,6 +325,15 @@ fn decode(body: &[u8]) -> Option<egui::ColorImage> {
 mod tests {
     use super::*;
 
+    /// A texture handle to stand in for a decoded picture.
+    fn texture() -> egui::TextureHandle {
+        egui::Context::default().load_texture(
+            "test",
+            egui::ColorImage::new([1, 1], egui::Color32::BLACK),
+            egui::TextureOptions::LINEAR,
+        )
+    }
+
     #[test]
     fn a_plain_http_url_is_refused_without_a_request() {
         // The URLs arrive in a network reply; one of them pointing somewhere
@@ -297,6 +350,41 @@ mod tests {
     #[test]
     fn an_empty_cache_is_loading_nothing() {
         assert_eq!(Previews::new().loading(), 0);
+    }
+
+    #[test]
+    fn a_picture_nobody_draws_is_dropped() {
+        // The point: memory follows what is on screen, not what has ever been
+        // on screen.
+        let mut previews = Previews::new();
+        previews
+            .entries
+            .insert("kept".to_owned(), State::Ready(texture(), 0));
+        previews
+            .entries
+            .insert("dropped".to_owned(), State::Ready(texture(), 0));
+
+        for _ in 0..=IDLE_FRAMES {
+            // Only one of the two is asked for.
+            if let Some(State::Ready(_, seen)) = previews.entries.get_mut("kept") {
+                *seen = previews.frame;
+            }
+            previews.sweep();
+        }
+
+        assert!(previews.entries.contains_key("kept"));
+        assert!(!previews.entries.contains_key("dropped"));
+    }
+
+    #[test]
+    fn a_picture_still_arriving_is_never_swept() {
+        // Its worker would finish into an entry nothing asked for.
+        let mut previews = Previews::new();
+        previews.entries.insert("late".to_owned(), State::Loading);
+        for _ in 0..(IDLE_FRAMES * 2) {
+            previews.sweep();
+        }
+        assert!(previews.entries.contains_key("late"));
     }
 
     #[test]

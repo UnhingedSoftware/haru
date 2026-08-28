@@ -195,6 +195,18 @@ impl Haru {
                 }
             }
         }
+
+        // Everything the frame did not draw is dropped here.
+        self.finish_frame();
+    }
+
+    /// Ends the frame.
+    ///
+    /// Pictures the frame did not draw are dropped here, which is what keeps a
+    /// long browse from growing: leave the Workshop tab and its tiles go with
+    /// it, rather than being held against a return that may never come.
+    fn finish_frame(&mut self) {
+        self.previews.sweep();
     }
 
     /// The row of tabs along the top.
