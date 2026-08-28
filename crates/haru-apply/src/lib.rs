@@ -10,6 +10,7 @@
 
 use std::path::{Path, PathBuf};
 
+pub mod install;
 mod kirie;
 mod offscreen;
 mod stream;
