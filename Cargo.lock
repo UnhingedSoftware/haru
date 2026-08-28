@@ -1062,6 +1062,7 @@ dependencies = [
  "haru-workshop",
  "image",
  "tapline",
+ "tapline-ids",
 ]
 
 [[package]]
