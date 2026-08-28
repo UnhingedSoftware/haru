@@ -334,8 +334,7 @@ impl Haru {
                 ui.horizontal(|ui| {
                     // The panel is worth more than the button that hides it,
                     // so the button is small and lives before the name.
-                    if ui
-                        .selectable_label(self.sidebar, "☰")
+                    if crate::icons::button(ui, crate::icons::Icon::Menu, self.sidebar)
                         .on_hover_text(if self.sidebar {
                             "Hide the panel"
                         } else {
@@ -349,7 +348,7 @@ impl Haru {
                     ui.label(RichText::new("haru").size(17.0).strong());
                     ui.add_space(14.0);
 
-                    for tab in [Tab::Workshop, Tab::Library, Tab::Preview, Tab::Settings] {
+                    for tab in [Tab::Library, Tab::Workshop, Tab::Preview, Tab::Settings] {
                         let chosen = self.tab == tab;
                         if ui
                             .selectable_label(
@@ -373,15 +372,10 @@ impl Haru {
                     }
 
                     // Which screen everything applies to, where both tabs can
-                    // see it: the Workshop downloads onto it and the Library
-                    // puts wallpapers on it, and it was only reachable from
-                    // one of them.
-                    let screens: Vec<String> = self
-                        .library
-                        .screens()
-                        .iter()
-                        .map(|screen| screen.name.clone())
-                        .collect();
+                    // see it. One picker rather than a row of cards in one tab:
+                    // it is the same choice from either, and it was previously
+                    // reachable from only one of them.
+                    let screens = self.library.screens().to_vec();
                     if !screens.is_empty() {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let chosen = self
@@ -390,15 +384,29 @@ impl Haru {
                                 .map_or_else(|| "Screen".to_owned(), str::to_owned);
                             egui::ComboBox::from_id_salt("screen")
                                 .selected_text(chosen)
+                                .width(160.0)
                                 .show_ui(ui, |ui| {
                                     for screen in screens {
-                                        let picked = self.library.target() == Some(screen.as_str());
-                                        if ui.selectable_label(picked, &screen).clicked() {
-                                            self.library.set_target(screen);
+                                        let picked =
+                                            self.library.target() == Some(screen.name.as_str());
+                                        // The name first, then what is on it —
+                                        // two screens showing wallpapers are
+                                        // told apart by the wallpaper, and by
+                                        // the name when both are empty.
+                                        let showing = screen
+                                            .current
+                                            .as_ref()
+                                            .and_then(|dir| self.library.title_of(dir))
+                                            .unwrap_or_else(|| "nothing".to_owned());
+                                        let response = ui.selectable_label(
+                                            picked,
+                                            format!("{}  ·  {showing}", screen.name),
+                                        );
+                                        if response.clicked() {
+                                            self.library.set_target(screen.name.clone());
                                         }
                                     }
                                 });
-                            ui.label(RichText::new("Applying to").small().color(theme::MUTED));
                         });
                     }
                 });

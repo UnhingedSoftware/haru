@@ -129,6 +129,15 @@ impl Library {
         &self.screens
     }
 
+    /// What a wallpaper directory is called, for anything showing a screen.
+    #[must_use]
+    pub fn title_of(&self, dir: &std::path::Path) -> Option<String> {
+        self.items
+            .iter()
+            .find(|item| item.dir == dir)
+            .map(|item| item.title.clone())
+    }
+
     /// Which screen an apply goes to.
     #[must_use]
     pub fn target(&self) -> Option<&str> {
@@ -173,7 +182,7 @@ impl Library {
                 .resizable(false)
                 .exact_width(238.0)
                 .frame(theme::panel_frame(theme::Side::Left))
-                .show(ctx, |ui| self.sidebar(ui, previews, config, backend));
+                .show(ctx, |ui| self.sidebar(ui, config, backend));
         }
 
         if let Some(index) = self.selected {
@@ -207,89 +216,18 @@ impl Library {
     }
 
     /// Screens on the left, with what is on them.
-    fn sidebar(
-        &mut self,
-        ui: &mut egui::Ui,
-        previews: &mut Previews,
-        config: &Config,
-        backend: Option<&dyn Backend>,
-    ) {
-        if self.screens.is_empty() {
-            ui.label(
-                RichText::new(match backend {
-                    Some(backend) => format!("{} is not running", backend.name()),
-                    None => "No renderer found".to_owned(),
-                })
-                .small()
-                .color(theme::MUTED),
-            );
-        } else {
-            ui.heading("Screens");
-            ui.add_space(6.0);
-        }
-
-        for screen in self.screens.clone() {
-            let chosen = self.target.as_deref() == Some(screen.name.as_str());
-            let response =
-                ui.allocate_response(Vec2::new(ui.available_width(), 92.0), Sense::click());
-            let rect = response.rect;
-            let rounding = Rounding::same(8.0);
-            ui.painter()
-                .rect_filled(rect, rounding, ui.visuals().extreme_bg_color);
-
-            // The wallpaper that is up, as the card's own background: the
-            // fastest way to answer "which screen is which".
-            if let Some(current) = screen.current.as_ref() {
-                if let Some(texture) = self
-                    .items
-                    .iter()
-                    .find(|item| &item.dir == current)
-                    .and_then(|item| item.preview.as_ref())
-                    .and_then(|path| previews.texture_path(ui.ctx(), path))
-                {
-                    egui::Image::new(&texture)
-                        .rounding(rounding)
-                        .maintain_aspect_ratio(true)
-                        .fit_to_exact_size(rect.size())
-                        .tint(egui::Color32::from_white_alpha(150))
-                        .paint_at(ui, rect);
-                }
-            }
-
-            if chosen {
-                ui.painter()
-                    .rect_stroke(rect, rounding, Stroke::new(2.0_f32, theme::ACCENT));
-            }
-
-            let title = self
-                .items
-                .iter()
-                .find(|item| Some(&item.dir) == screen.current.as_ref())
-                .map_or_else(|| "nothing".to_owned(), |item| item.title.clone());
-            ui.painter().text(
-                rect.left_top() + Vec2::new(10.0, 10.0),
-                egui::Align2::LEFT_TOP,
-                &screen.name,
-                egui::FontId::proportional(14.0),
-                theme::TEXT,
-            );
-            ui.painter().text(
-                rect.left_bottom() + Vec2::new(10.0, -10.0),
-                egui::Align2::LEFT_BOTTOM,
-                title,
-                egui::FontId::proportional(11.0),
-                theme::MUTED,
-            );
-
-            if response.clicked() {
-                self.target = Some(screen.name.clone());
-            }
-            ui.add_space(6.0);
-        }
-
+    fn sidebar(&mut self, ui: &mut egui::Ui, config: &Config, backend: Option<&dyn Backend>) {
+        ui.heading("Library");
+        ui.label(
+            RichText::new(match (self.screens.is_empty(), backend) {
+                (false, _) => "Click a wallpaper to put it up".to_owned(),
+                (true, Some(backend)) => format!("{} is not running", backend.name()),
+                (true, None) => "No renderer found".to_owned(),
+            })
+            .small()
+            .color(theme::MUTED),
+        );
         ui.add_space(10.0);
-        ui.separator();
-        ui.add_space(6.0);
 
         ui.label(RichText::new("Filter").small().color(theme::MUTED));
         ui.add(
@@ -556,13 +494,15 @@ impl Library {
 
                 ui.horizontal(|ui| {
                     ui.with_layout(Layout::right_to_left(Align::TOP), |ui| {
-                        if ui.small_button("✕").on_hover_text("Close").clicked() {
+                        if crate::icons::button(ui, crate::icons::Icon::Close, false)
+                            .on_hover_text("Close")
+                            .clicked()
+                        {
                             self.selected = None;
                         }
                         // An icon, not a row of buttons: opening the page is
                         // one thing you occasionally want, not a decision.
-                        if ui
-                            .small_button("↗")
+                        if crate::icons::button(ui, crate::icons::Icon::External, false)
                             .on_hover_text("Open the Workshop page")
                             .clicked()
                         {

@@ -11,6 +11,7 @@
 
 mod account;
 mod app;
+mod icons;
 mod library;
 mod preview;
 mod settings;
@@ -527,7 +528,10 @@ impl Browser {
                     )
                     .on_hover_text(plain_text(&found.item.title));
                     ui.with_layout(Layout::right_to_left(Align::TOP), |ui| {
-                        if ui.small_button("✕").clicked() {
+                        if crate::icons::button(ui, crate::icons::Icon::Close, false)
+                            .on_hover_text("Close")
+                            .clicked()
+                        {
                             self.selected = None;
                         }
                     });

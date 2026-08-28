@@ -169,7 +169,7 @@ impl Account {
                 ui.horizontal(|ui| {
                     ui.heading("Sign in to download");
                     ui.with_layout(Layout::right_to_left(Align::TOP), |ui| {
-                        if ui.small_button("✕").clicked() {
+                        if crate::icons::button(ui, crate::icons::Icon::Close, false).clicked() {
                             close = true;
                         }
                     });
