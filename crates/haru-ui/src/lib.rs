@@ -695,7 +695,10 @@ impl Browser {
                 let mut jump = None;
 
                 if ui
-                    .add_enabled(current < pages && !waiting, egui::Button::new("›"))
+                    .add_enabled(
+                        current < pages && !waiting,
+                        egui::Button::new(crate::icons::text(crate::icons::Icon::Next)),
+                    )
                     .clicked()
                 {
                     jump = Some(current.saturating_add(1));
@@ -723,7 +726,10 @@ impl Browser {
                 }
 
                 if ui
-                    .add_enabled(current > 1 && !waiting, egui::Button::new("‹"))
+                    .add_enabled(
+                        current > 1 && !waiting,
+                        egui::Button::new(crate::icons::text(crate::icons::Icon::Previous)),
+                    )
                     .clicked()
                 {
                     jump = Some(current.saturating_sub(1));

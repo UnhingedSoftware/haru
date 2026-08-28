@@ -37,6 +37,9 @@ const SURFACE_HOVER: Color32 = Color32::from_rgba_premultiplied(44, 44, 58, 205)
 /// Hairlines between surfaces.
 const HAIRLINE: Color32 = Color32::from_rgba_premultiplied(58, 58, 74, 150);
 
+/// What the bundled icon face is called, as a font and as a family.
+pub const ICONS: &str = "icons";
+
 /// Where a font that covers Chinese, Japanese and Korean lives, per platform.
 ///
 /// Most Workshop titles are CJK — a page of Wallpaper Engine's most-subscribed
@@ -62,29 +65,44 @@ const CJK_FONTS: [&str; 8] = [
     "C:/Windows/Fonts/meiryo.ttc",
 ];
 
-/// Adds a CJK fallback to the default fonts, if this machine has one.
+/// Loads the fonts: the icon face, and a CJK fallback if this machine has one.
 ///
-/// A fallback rather than a replacement: egui's own face is what the interface
-/// is designed in, and it stays first. The CJK face is only reached for glyphs
-/// nothing before it has.
+/// The icon face is bundled because it has to be — it is five glyphs no system
+/// ships. The CJK face is not, and must not be: it is 18 MB, more than the
+/// whole binary, and every desktop that can display those titles anywhere
+/// already has one.
+///
+/// Both are fallbacks rather than replacements: egui's own face is what the
+/// interface is designed in, and it stays first.
 fn load_fonts(ctx: &egui::Context) {
-    let Some(bytes) = CJK_FONTS.iter().find_map(|path| std::fs::read(path).ok()) else {
-        return;
-    };
-
     let mut fonts = egui::FontDefinitions::default();
+
     fonts.font_data.insert(
-        "cjk".to_owned(),
-        // These are collections; index 0 is the face the rest are weights of.
-        egui::FontData::from_owned(bytes).tweak(egui::FontTweak::default()),
+        ICONS.to_owned(),
+        egui::FontData::from_static(include_bytes!("../assets/remixicon.ttf")),
     );
-    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-        fonts
-            .families
-            .entry(family)
-            .or_default()
-            .push("cjk".to_owned());
+    // Its own family, not a fallback on the text families: an icon codepoint
+    // is in the private-use area, where a text font may have something else
+    // entirely, and whichever font is asked first would win.
+    fonts
+        .families
+        .insert(egui::FontFamily::Name(ICONS.into()), vec![ICONS.to_owned()]);
+
+    if let Some(bytes) = CJK_FONTS.iter().find_map(|path| std::fs::read(path).ok()) {
+        fonts.font_data.insert(
+            "cjk".to_owned(),
+            // These are collections; index 0 is the face the rest are weights of.
+            egui::FontData::from_owned(bytes).tweak(egui::FontTweak::default()),
+        );
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            fonts
+                .families
+                .entry(family)
+                .or_default()
+                .push("cjk".to_owned());
+        }
     }
+
     ctx.set_fonts(fonts);
 }
 
