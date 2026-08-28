@@ -1,0 +1,19 @@
+[package]
+name = "haru-ui"
+description = "The picker window: filter sidebar, result grid, detail pane"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+egui = { workspace = true }
+haru-apply = { workspace = true }
+haru-core = { workspace = true }
+haru-media = { workspace = true }
+haru-workshop = { workspace = true }
+tapline = { workspace = true }
+
+[lints]
+workspace = true

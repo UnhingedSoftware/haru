@@ -1,0 +1,20 @@
+[package]
+name = "haru"
+description = "A wallpaper picker and Workshop browser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "haru"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { workspace = true }
+egui = { workspace = true }
+haru-ui = { workspace = true }
+
+[lints]
+workspace = true
