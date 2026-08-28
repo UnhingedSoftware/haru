@@ -88,8 +88,8 @@ pub enum Reply {
     },
     /// What routes to Steam exist on this machine.
     Account {
-        /// Whether a saved login exists.
-        saved: bool,
+        /// Who is signed in on this machine, if anyone.
+        saved: Option<String>,
         /// Whether a running Steam client can be reached.
         client: bool,
     },
@@ -231,18 +231,21 @@ const CLIENT_PATIENCE: std::time::Duration = std::time::Duration::from_secs(20);
 /// cannot wait on that, so the answer after this long is "no client".
 const CLIENT_PROBE: std::time::Duration = std::time::Duration::from_secs(4);
 
-/// Whether a login has been saved on this machine.
+/// Who has a login saved on this machine, if anyone.
 ///
-/// The file's existence, not its contents: reading it would mean knowing which
-/// account to ask for, and the question here is only whether signing in has
-/// already happened.
-fn saved_login() -> bool {
-    match tapline_auth::TokenStore::default_file() {
-        tapline_auth::TokenStore::File { path } => {
-            std::fs::metadata(path).is_ok_and(|file| file.len() > 0)
-        }
-        _ => false,
-    }
+/// tapline's own answer rather than the file's existence, which is what this
+/// used to check: `accounts()` reads the store without touching Steam and
+/// names what it finds, so the window can say who it is signed in as instead
+/// of only that it is.
+///
+/// More than one can be saved. haru signs in one at a time, so the first is
+/// the one it is using.
+fn saved_login() -> Option<String> {
+    tapline_auth::TokenStore::default_file()
+        .accounts()
+        .ok()?
+        .into_iter()
+        .next()
 }
 
 /// Whether a running Steam client can be reached, without hanging on it.

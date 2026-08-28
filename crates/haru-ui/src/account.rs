@@ -17,8 +17,8 @@ use crate::theme;
 pub struct Account {
     /// Whether it is on screen.
     open: bool,
-    /// Whether a login is already saved on this machine.
-    signed_in: bool,
+    /// Who the saved login on this machine belongs to, if anyone.
+    who: Option<String>,
     /// Whether a running Steam client can be reached.
     client: bool,
     /// The code being shown, and the texture it was drawn into.
@@ -45,7 +45,7 @@ impl Account {
     pub fn new() -> Self {
         Self {
             open: false,
-            signed_in: false,
+            who: None,
             client: false,
             code: None,
             waiting: false,
@@ -57,14 +57,14 @@ impl Account {
     ///
     /// Opens itself the first time it learns there is no way to download —
     /// which is the moment worth interrupting for, rather than on every start.
-    pub fn observed(&mut self, saved: bool, client: bool) {
-        let knew_nothing = !self.signed_in && !self.client;
-        self.signed_in = saved;
+    pub fn observed(&mut self, saved: Option<String>, client: bool) {
+        let knew_nothing = self.who.is_none() && !self.client;
+        self.who = saved;
         self.client = client;
-        if knew_nothing && !self.signed_in && !self.client {
+        if knew_nothing && self.who.is_none() && !self.client {
             self.open = true;
         }
-        if self.signed_in {
+        if self.who.is_some() {
             // Signed in: nothing left to ask.
             self.open = false;
             self.waiting = false;
@@ -79,8 +79,8 @@ impl Account {
     }
 
     /// Records a finished sign-in.
-    pub fn signed_in(&mut self, _account: String) {
-        self.signed_in = true;
+    pub fn signed_in(&mut self, account: String) {
+        self.who = Some(account);
         self.code = None;
         self.waiting = false;
         self.open = false;
@@ -88,7 +88,7 @@ impl Account {
 
     /// Records that the saved login is gone.
     pub fn signed_out(&mut self) {
-        self.signed_in = false;
+        self.who = None;
         self.code = None;
         self.waiting = false;
         self.status.clear();
@@ -117,13 +117,13 @@ impl Account {
     /// Whether downloading is possible at all.
     #[must_use]
     pub const fn can_download(&self) -> bool {
-        self.signed_in || self.client
+        self.who.is_some() || self.client
     }
 
-    /// Whether a login is saved.
+    /// Who the saved login belongs to, if there is one.
     #[must_use]
-    pub const fn is_signed_in(&self) -> bool {
-        self.signed_in
+    pub fn who(&self) -> Option<&str> {
+        self.who.as_deref()
     }
 
     /// Whether a running Steam client can do the fetching.
@@ -352,28 +352,28 @@ mod tests {
         // Opening over someone who can already download is an interruption
         // with nothing behind it.
         let mut account = Account::new();
-        account.observed(false, true);
+        account.observed(None, true);
         assert!(!account.open, "a running client is a way to download");
 
         let mut account = Account::new();
-        account.observed(true, false);
+        account.observed(Some("someone".to_owned()), false);
         assert!(!account.open, "a saved token is a way to download");
 
         let mut account = Account::new();
-        account.observed(false, false);
+        account.observed(None, false);
         assert!(account.open, "neither: worth asking");
     }
 
     #[test]
     fn signing_in_closes_it_and_is_remembered() {
         let mut account = Account::new();
-        account.observed(false, false);
+        account.observed(None, false);
         account.show_code("https://s.team/q/1".to_owned());
         assert!(account.open);
 
         account.signed_in("someone".to_owned());
         assert!(!account.open);
-        assert!(account.is_signed_in());
+        assert_eq!(account.who(), Some("someone"));
         assert!(account.can_download());
     }
 

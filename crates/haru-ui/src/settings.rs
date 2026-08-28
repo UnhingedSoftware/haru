@@ -44,7 +44,7 @@ impl Settings {
         ctx: &egui::Context,
         config: &mut Config,
         backend: Option<&dyn Backend>,
-        signed_in: bool,
+        signed_in: Option<&str>,
         client: bool,
     ) -> (bool, bool, bool) {
         let mut changed = false;
@@ -64,16 +64,19 @@ impl Settings {
                         ui.label(RichText::new("Steam").strong());
                         ui.add_space(4.0);
                         match (signed_in, client) {
-                            (true, _) => {
-                                ui.label(RichText::new("Signed in").color(theme::ACCENT));
+                            (Some(who), _) => {
+                                ui.label(
+                                    RichText::new(format!("Signed in as {who}"))
+                                        .color(theme::ACCENT),
+                                );
                             }
-                            (false, true) => {
+                            (None, true) => {
                                 ui.label(
                                     RichText::new("Using the running Steam client")
                                         .color(theme::ACCENT),
                                 );
                             }
-                            (false, false) => {
+                            (None, false) => {
                                 ui.label(
                                     RichText::new("Not signed in — browsing works, downloading does not")
                                         .color(theme::MUTED),
@@ -82,12 +85,12 @@ impl Settings {
                         }
                         ui.add_space(6.0);
                         ui.horizontal(|ui| {
-                            if ui.button(if signed_in { "Sign in again…" } else { "Sign in…" }).clicked() {
+                            if ui.button(if signed_in.is_some() { "Sign in again…" } else { "Sign in…" }).clicked() {
                                 sign_in = true;
                             }
                             // Only offered when there is something to forget.
                             // tapline keeps the login; this asks it to stop.
-                            if signed_in
+                            if signed_in.is_some()
                                 && ui
                                     .button(RichText::new("Disconnect").color(theme::DANGER))
                                     .on_hover_text("Forgets the saved login on this machine")

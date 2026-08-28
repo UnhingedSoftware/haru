@@ -233,7 +233,7 @@ impl Haru {
                     ctx,
                     &mut self.config,
                     self.backend.as_deref(),
-                    self.account.is_signed_in(),
+                    self.account.who(),
                     self.account.has_client(),
                 );
                 if sign_in {
@@ -282,7 +282,7 @@ impl Haru {
                 }
                 // Nothing to sign in with and no client to ask is exactly the
                 // state worth interrupting for.
-                _ => self.account.observed(false, false),
+                _ => self.account.observed(None, false),
             }
         }
 
