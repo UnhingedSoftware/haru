@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 pub mod install;
 mod kirie;
+pub mod launch;
 mod offscreen;
 mod stream;
 
