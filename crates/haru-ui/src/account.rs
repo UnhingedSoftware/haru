@@ -161,7 +161,7 @@ impl Account {
             .default_width(380.0)
             .frame(
                 egui::Frame::window(&ctx.style())
-                    .fill(theme::BACKDROP)
+                    .fill(theme::MODAL)
                     .inner_margin(egui::Margin::same(18.0)),
             )
             .show(ctx, |ui| {

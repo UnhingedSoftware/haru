@@ -25,6 +25,13 @@ pub const MUTED: Color32 = Color32::from_rgb(0x96, 0x96, 0xA8);
 /// The window behind everything, translucent.
 pub const BACKDROP: Color32 = Color32::from_rgba_premultiplied(9, 9, 13, 214);
 
+/// A dialog that stops everything behind it.
+///
+/// Opaque, alone among the surfaces here: the translucency everywhere else
+/// lets the desktop through, and through a modal it lets the *window* through
+/// — text over text, which reads as a rendering fault rather than a style.
+pub const MODAL: Color32 = Color32::from_rgb(17, 17, 24);
+
 /// A panel over the backdrop.
 const PANEL: Color32 = Color32::from_rgba_premultiplied(15, 15, 21, 205);
 
