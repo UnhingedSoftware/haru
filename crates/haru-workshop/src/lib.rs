@@ -21,10 +21,8 @@
 //! }));
 //!
 //! // …frames happen…
-//! while let Some((answered, reply)) = workshop.poll() {
-//!     if answered == id {
-//!         println!("{reply:?}");
-//!     }
+//! if let Some(reply) = workshop.take(id) {
+//!     println!("{reply:?}");
 //! }
 //! # }
 //! ```
