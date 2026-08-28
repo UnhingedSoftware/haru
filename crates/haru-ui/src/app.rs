@@ -78,6 +78,11 @@ pub struct Haru {
     account: Account,
     /// The offer to install a renderer, on a machine with none.
     installer: crate::renderer::Installer,
+    /// A renderer being started, until it answers or gives up.
+    ///
+    /// On a thread because starting one means waiting for it to build the
+    /// first scene, which is seconds, and the window keeps drawing meanwhile.
+    starting: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
     /// The connection everything Steam-shaped goes over.
     workshop: Rc<Workshop>,
     /// The request that asks who is signed in, while it is outstanding.
@@ -177,6 +182,7 @@ impl Haru {
             sidebar: true,
             account: Account::new(),
             installer,
+            starting: None,
             workshop,
             asked_who: false,
             who_request: None,
@@ -275,6 +281,13 @@ impl Haru {
             }
         }
 
+        // A wallpaper picked while nothing was rendering is a request to start
+        // something, not a failure.
+        if let Some((screen, dir)) = self.library.take_pending() {
+            self.start_renderer(ctx, &screen, &dir);
+        }
+        self.collect_renderer(ctx);
+
         // Last, so they sit over whatever was drawn. One at a time: two
         // modals over each other is a window nobody can answer.
         match self.installer.ui(ctx) {
@@ -296,6 +309,78 @@ impl Haru {
         }
 
         self.finish_frame();
+    }
+
+    /// Starts an engine on this wallpaper, if there is one to start.
+    ///
+    /// One engine serves every screen, so an engine somebody else started is
+    /// left alone: a second would fight the first for the same socket.
+    fn start_renderer(&mut self, ctx: &egui::Context, screen: &str, dir: &std::path::Path) {
+        if self.starting.is_some() {
+            return;
+        }
+
+        let Some(binary) = haru_apply::install::installed() else {
+            self.library.say("no renderer installed yet");
+            self.installer.offer();
+            return;
+        };
+        let socket = haru_apply::Kirie::new(self.config.socket.clone())
+            .socket()
+            .to_path_buf();
+        if haru_apply::launch::running() {
+            self.library.say(format!(
+                "a renderer is running but not answering on {}",
+                socket.display()
+            ));
+            return;
+        }
+
+        let (answer, heard) = std::sync::mpsc::channel();
+        let (screen, dir) = (screen.to_owned(), dir.to_owned());
+        let ctx = ctx.clone();
+        let spawned = std::thread::Builder::new()
+            .name("haru-start-renderer".to_owned())
+            .spawn(move || {
+                let _ = answer.send(haru_apply::launch::start(&binary, &socket, &screen, &dir));
+                ctx.request_repaint();
+            });
+
+        if spawned.is_ok() {
+            self.starting = Some(heard);
+            self.library.say("starting the renderer\u{2026}");
+        } else {
+            self.library.say("could not start the renderer");
+        }
+    }
+
+    /// Takes the answer from a renderer that was being started.
+    fn collect_renderer(&mut self, ctx: &egui::Context) {
+        let Some(heard) = self.starting.as_ref() else {
+            return;
+        };
+        match heard.try_recv() {
+            Ok(Ok(())) => {
+                self.starting = None;
+                // It came up on the wallpaper it was started for, so there is
+                // nothing left to apply — only a backend to notice.
+                self.backend = haru_apply::detect(self.config.socket.clone());
+                self.library.refresh(&self.config, self.backend.as_deref());
+                self.library.say("the renderer is up");
+            }
+            Ok(Err(why)) => {
+                self.starting = None;
+                self.library.say(why);
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.starting = None;
+                self.library.say("the renderer stopped without answering");
+            }
+            // Still coming up, and egui only draws when something happens.
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                ctx.request_repaint_after(std::time::Duration::from_millis(200));
+            }
+        }
     }
 
     /// Takes the connection's answers about the account.

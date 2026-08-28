@@ -82,6 +82,13 @@ pub struct Library {
     workshop: std::rc::Rc<Workshop>,
     /// The unsubscribe in flight, so its failure lands here and not elsewhere.
     unsubscribing: Option<haru_workshop::RequestId>,
+    /// A wallpaper picked while nothing was rendering.
+    ///
+    /// kirie takes its first wallpaper on the command line, so a click with no
+    /// engine running is not a failure — it is the argument the engine has
+    /// been waiting for. Handed up rather than acted on here, because starting
+    /// one takes seconds and this runs on the drawing thread.
+    pending: Option<(String, PathBuf)>,
 }
 
 impl Library {
@@ -115,6 +122,7 @@ impl Library {
             target: None,
             screens: Vec::new(),
             status: String::new(),
+            pending: None,
             confirming: None,
             settings: Vec::new(),
             settings_for: None,
@@ -154,7 +162,19 @@ impl Library {
         self.items = library::scan(&config.libraries());
         self.screens = backend
             .map(|backend| backend.screens().unwrap_or_default())
-            .unwrap_or_default();
+            .filter(|screens| !screens.is_empty())
+            // No engine to ask, so the kernel is asked instead. An engine has
+            // to be told which output to own when it starts, which is exactly
+            // when there is none to name them.
+            .unwrap_or_else(|| {
+                haru_apply::launch::connectors()
+                    .into_iter()
+                    .map(|name| Screen {
+                        name,
+                        current: None,
+                    })
+                    .collect()
+            });
         if self.target.is_none() {
             self.target = self.screens.first().map(|screen| screen.name.clone());
         }
@@ -627,6 +647,17 @@ impl Library {
         self.apply(&screen, dir, backend);
     }
 
+    /// Takes the wallpaper waiting for an engine to be started for it.
+    pub fn take_pending(&mut self) -> Option<(String, PathBuf)> {
+        self.pending.take()
+    }
+
+    /// Says something in the status bar, for work done on someone else's
+    /// behalf.
+    pub fn say(&mut self, what: impl Into<String>) {
+        self.status = what.into();
+    }
+
     /// What this wallpaper can be told to do, and where telling it goes.
     ///
     /// Editable only while it is on a screen: a property is a message to a
@@ -715,7 +746,10 @@ impl Library {
     /// Applies one wallpaper and records what happened.
     fn apply(&mut self, screen: &str, dir: &std::path::Path, backend: Option<&dyn Backend>) {
         let Some(backend) = backend else {
-            self.status = "no renderer to apply with".to_owned();
+            // Nothing is rendering, which is a thing that can be fixed rather
+            // than reported: whoever owns this view starts an engine on this
+            // wallpaper. Saying so here would be guessing at the outcome.
+            self.pending = Some((screen.to_owned(), dir.to_owned()));
             return;
         };
 
@@ -930,9 +964,17 @@ mod tests {
     }
 
     #[test]
-    fn applying_with_no_renderer_says_so_rather_than_doing_nothing() {
+    fn applying_with_no_renderer_asks_for_one_to_be_started() {
+        // kirie takes its first wallpaper on the command line, so a click with
+        // nothing running is the argument an engine has been waiting for
+        // rather than an error to report.
         let mut library = library();
         library.apply("DP-1", std::path::Path::new("/tmp/1"), None);
-        assert!(library.status.contains("no renderer"), "{}", library.status);
+        assert_eq!(
+            library.take_pending(),
+            Some(("DP-1".to_owned(), PathBuf::from("/tmp/1")))
+        );
+        // Taken once: a second frame must not start a second engine.
+        assert_eq!(library.take_pending(), None);
     }
 }
