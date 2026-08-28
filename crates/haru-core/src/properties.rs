@@ -162,7 +162,7 @@ fn property(key: &str, raw: &serde_json::Value) -> Option<Property> {
         .and_then(serde_json::Value::as_str)
         .map(crate::plain_text)
         .filter(|label| !label.is_empty())
-        .map_or_else(|| pretty(key), |label| readable(&label));
+        .map_or_else(|| clip(&pretty(key)), |label| readable(&label));
 
     Some(Property {
         key: key.to_owned(),
@@ -210,21 +210,29 @@ fn triple(raw: &str) -> [f32; 3] {
 /// contents of the property as its own label — one observed here is a 200-byte
 /// image URL, which pushes every control below it off the panel.
 fn readable(label: &str) -> String {
+    let looks_like_a_key = label.starts_with("ui_")
+        || (!label.contains(' ') && label.contains('_') && label.is_ascii());
+    if looks_like_a_key {
+        clip(&pretty(label))
+    } else {
+        clip(label)
+    }
+}
+
+/// Cuts a label down to something that fits beside a control.
+///
+/// Both paths go through here. A property whose *key* is the value — one
+/// observed wallpaper keys a property with a 200-byte image tag — arrives with
+/// no label at all, and prettifying it produced the same wall of text the
+/// label path was already protected from.
+fn clip(label: &str) -> String {
     /// Past this a label is not a label.
     const LONGEST: usize = 48;
 
-    let looks_like_a_key = label.starts_with("ui_")
-        || (!label.contains(' ') && label.contains('_') && label.is_ascii());
-    let text = if looks_like_a_key {
-        pretty(label)
-    } else {
-        label.to_owned()
-    };
-
-    if text.chars().count() <= LONGEST {
-        return text;
+    if label.chars().count() <= LONGEST {
+        return label.to_owned();
     }
-    let clipped: String = text.chars().take(LONGEST).collect();
+    let clipped: String = label.chars().take(LONGEST).collect();
     format!("{}…", clipped.trim_end())
 }
 
@@ -342,6 +350,17 @@ mod tests {
         // leave it out, and the editor resolves it where a reader cannot.
         assert_eq!(readable("ui_browse_properties_brightness"), "Brightness");
         assert_eq!(readable("Cursor | 光标"), "Cursor | 光标");
+    }
+
+    #[test]
+    fn a_key_that_is_really_the_value_is_clipped_too() {
+        // The label path was clipped and the key path was not, so a property
+        // keyed with a 200-byte image tag still filled the panel.
+        let long = "img_src_http_example_invalid_".repeat(9);
+        let shown = property(&long, &serde_json::json!({"type": "textinput", "value": ""}))
+            .map(|found| found.label)
+            .unwrap_or_default();
+        assert!(shown.chars().count() <= 49, "{shown}");
     }
 
     #[test]
