@@ -10,6 +10,7 @@ use egui::{Align, Layout, RichText, Rounding, Sense, Stroke, Vec2};
 use haru_apply::{Backend, Screen};
 use haru_core::{Config, Installed, human_size, library, overrides, properties};
 use haru_media::Previews;
+use haru_workshop::{Reply, Request, Workshop};
 
 use crate::theme;
 
@@ -77,18 +78,30 @@ pub struct Library {
     /// Read from disk, so they are reread when the subject changes rather than
     /// on every frame.
     settings_for: Option<PathBuf>,
+    /// The connection unsubscribing goes over, shared with the browser.
+    workshop: std::rc::Rc<Workshop>,
 }
 
-impl Default for Library {
-    fn default() -> Self {
-        Self::new()
+impl Library {
+    /// Takes anything the connection has answered.
+    ///
+    /// Only unsubscribes are sent from here, so anything else belongs to the
+    /// browser and is left for it.
+    fn collect(&mut self) {
+        while let Some((_, reply)) = self.workshop.poll() {
+            match reply {
+                Reply::Unsubscribed => self.status = "unsubscribed".to_owned(),
+                Reply::Failed(why) => self.status = why,
+                _ => {}
+            }
+        }
     }
 }
 
 impl Library {
     /// An empty library, before anything is scanned.
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(workshop: std::rc::Rc<Workshop>) -> Self {
         Self {
             items: Vec::new(),
             filter: String::new(),
@@ -100,7 +113,25 @@ impl Library {
             confirming: None,
             settings: Vec::new(),
             settings_for: None,
+            workshop,
         }
+    }
+
+    /// The screens the renderer knows about.
+    #[must_use]
+    pub fn screens(&self) -> &[Screen] {
+        &self.screens
+    }
+
+    /// Which screen an apply goes to.
+    #[must_use]
+    pub fn target(&self) -> Option<&str> {
+        self.target.as_deref()
+    }
+
+    /// Chooses the screen an apply goes to.
+    pub fn set_target(&mut self, screen: String) {
+        self.target = Some(screen);
     }
 
     /// Rereads the libraries and the screens.
@@ -490,17 +521,22 @@ impl Library {
                 for row in shown.chunks(columns) {
                     ui.horizontal(|ui| {
                         for (index, item) in row {
-                            let response =
-                                tile(ui, previews, item, tile_width, self.selected == Some(*index));
+                            let response = tile(
+                                ui,
+                                previews,
+                                item,
+                                tile_width,
+                                self.selected == Some(*index),
+                            );
+                            // Clicking a wallpaper puts it up. Selecting was
+                            // the old meaning and is still what happens — the
+                            // pane opens on it — but choosing a wallpaper in a
+                            // wallpaper picker means wanting to see it.
                             if response.clicked() {
                                 self.selected = Some(*index);
-                            }
-                            // A double click is the shortcut people try first,
-                            // and it should do the obvious thing.
-                            if response.double_clicked()
-                                && let Some(target) = self.target.clone()
-                            {
-                                apply = Some((target, item.dir.clone()));
+                                if let Some(target) = self.target.clone() {
+                                    apply = Some((target, item.dir.clone()));
+                                }
                             }
                         }
                     });
@@ -529,12 +565,35 @@ impl Library {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                // Everything in the pane is bounded by it: a Workshop title
+                // runs as long as its author liked, and an unbounded label is
+                // drawn straight past the panel's edge.
+                ui.set_max_width(ui.available_width());
+
                 ui.horizontal(|ui| {
-                    ui.heading(RichText::new(&item.title).size(17.0));
                     ui.with_layout(Layout::right_to_left(Align::TOP), |ui| {
-                        if ui.small_button("✕").clicked() {
+                        if ui.small_button("✕").on_hover_text("Close").clicked() {
                             self.selected = None;
                         }
+                        // An icon, not a row of buttons: opening the page is
+                        // one thing you occasionally want, not a decision.
+                        if ui
+                            .small_button("↗")
+                            .on_hover_text("Open the Workshop page")
+                            .clicked()
+                        {
+                            open(std::path::Path::new(&format!(
+                                "https://steamcommunity.com/sharedfiles/filedetails/?id={}",
+                                item.id
+                            )));
+                        }
+                        ui.with_layout(Layout::left_to_right(Align::TOP), |ui| {
+                            ui.add(
+                                egui::Label::new(RichText::new(&item.title).size(15.0).strong())
+                                    .truncate(),
+                            )
+                            .on_hover_text(&item.title);
+                        });
                     });
                 });
 
@@ -570,55 +629,34 @@ impl Library {
                     }
                 });
 
-                ui.add_space(8.0);
-                ui.horizontal_wrapped(|ui| {
-                    if ui.button("Open folder").clicked() {
-                        open(&item.dir);
-                        self.status = "opened the folder".to_owned();
-                    }
-                    if ui.button("Copy path").clicked() {
-                        ui.output_mut(|out| {
-                            out.copied_text = item.dir.to_string_lossy().into_owned();
-                        });
-                        self.status = "path copied".to_owned();
-                    }
-                    if ui.button("Workshop page").clicked() {
-                        open(std::path::Path::new(&format!(
-                            "https://steamcommunity.com/sharedfiles/filedetails/?id={}",
-                            item.id
-                        )));
-                        self.status = "opened the Workshop page".to_owned();
-                    }
-                });
-
                 ui.add_space(10.0);
-                ui.separator();
-                ui.add_space(6.0);
 
                 if self.confirming.as_deref() == Some(item.id.as_str()) {
                     ui.label(
-                        RichText::new("Delete the files? Steam will fetch it again unless you unsubscribe there too.")
+                        RichText::new("Remove it and tell Steam you no longer want it?")
                             .small()
                             .color(theme::MUTED),
                     );
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Delete").clicked() {
-                            self.status = match std::fs::remove_dir_all(&item.dir) {
-                                Ok(()) => {
-                                    self.items.retain(|other| other.id != item.id);
-                                    self.selected = None;
-                                    format!("deleted {}", item.title)
-                                }
-                                Err(error) => format!("could not delete: {error}"),
-                            };
-                            self.confirming = None;
+                        if ui
+                            .add(egui::Button::new("Unsubscribe").fill(theme::DANGER))
+                            .clicked()
+                        {
+                            self.unsubscribe(&item);
                         }
                         if ui.button("Keep").clicked() {
                             self.confirming = None;
                         }
                     });
-                } else if ui.button("Delete from disk").clicked() {
+                } else if ui
+                    .add(
+                        egui::Button::new(RichText::new("Unsubscribe").color(theme::DANGER))
+                            .stroke(egui::Stroke::new(1.0_f32, theme::DANGER)),
+                    )
+                    .on_hover_text("Removes the files and the subscription")
+                    .clicked()
+                {
                     self.confirming = Some(item.id.clone());
                 }
 
@@ -627,6 +665,31 @@ impl Library {
                 ui.add_space(6.0);
                 self.properties_of(ui, &item, backend);
             });
+    }
+
+    /// Removes a wallpaper, and the reason Steam would bring it back.
+    ///
+    /// Both halves, because either alone leaves the job half done: the files
+    /// go, and Steam is told the account no longer wants the item — otherwise
+    /// the client downloads it again on its next sync.
+    fn unsubscribe(&mut self, item: &Installed) {
+        self.confirming = None;
+
+        if let Ok(id) = item.id.parse::<u64>() {
+            self.workshop.send(Request::Unsubscribe {
+                app: haru_core::WALLPAPER_ENGINE,
+                item: tapline_ids::PublishedFileId(id),
+            });
+        }
+
+        self.status = match std::fs::remove_dir_all(&item.dir) {
+            Ok(()) => {
+                self.items.retain(|other| other.id != item.id);
+                self.selected = None;
+                format!("removed {}", item.title)
+            }
+            Err(error) => format!("could not remove the files: {error}"),
+        };
     }
 
     /// Puts a wallpaper on whichever screen is chosen.
@@ -651,7 +714,12 @@ impl Library {
     /// loaded wallpaper, and there is nothing to send it to otherwise. Shown
     /// either way, because "what can this one do" is worth answering before
     /// you commit to putting it up.
-    fn properties_of(&mut self, ui: &mut egui::Ui, item: &Installed, backend: Option<&dyn Backend>) {
+    fn properties_of(
+        &mut self,
+        ui: &mut egui::Ui,
+        item: &Installed,
+        backend: Option<&dyn Backend>,
+    ) {
         let live = self
             .screens
             .iter()
@@ -888,7 +956,7 @@ mod tests {
                 item("2", "Rain", "video", 100),
                 item("3", "aurora", "scene", 200),
             ],
-            ..Library::new()
+            ..Library::new(std::rc::Rc::new(Workshop::spawn()))
         }
     }
 

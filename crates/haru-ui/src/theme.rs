@@ -13,6 +13,9 @@ use egui::{Color32, Rounding, Stroke, Vec2};
 /// The accent: selection, focus, anything asking to be clicked.
 pub const ACCENT: Color32 = Color32::from_rgb(0x8B, 0x7C, 0xFF);
 
+/// What a button that takes something away is drawn in.
+pub const DANGER: Color32 = Color32::from_rgb(0xE5, 0x6B, 0x6F);
+
 /// Body text.
 pub const TEXT: Color32 = Color32::from_rgb(0xE9, 0xE9, 0xF2);
 

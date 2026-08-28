@@ -23,7 +23,9 @@ pub fn columns_for(available: f32, min_tile: f32, spacing: f32) -> (usize, f32) 
     /// Past this a tile is a poster, not a thumbnail.
     const MAX_TILE: f32 = 260.0;
 
-    let columns = ((available + spacing) / (min_tile + spacing)).floor().max(1.0);
+    let columns = ((available + spacing) / (min_tile + spacing))
+        .floor()
+        .max(1.0);
     let width = ((available - spacing * (columns - 1.0)) / columns).min(MAX_TILE);
     (columns as usize, width.max(min_tile))
 }

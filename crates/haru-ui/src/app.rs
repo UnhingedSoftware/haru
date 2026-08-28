@@ -10,6 +10,9 @@ use haru_apply::Backend;
 use haru_core::{Config, Filters};
 use haru_media::Previews;
 
+use haru_workshop::Workshop;
+use std::rc::Rc;
+
 use crate::{Browser, Library, Preview, Settings, theme};
 
 /// Which view is showing.
@@ -111,7 +114,11 @@ impl Haru {
             text: search.unwrap_or_default(),
             ..Filters::new()
         };
-        let mut browser = Browser::with_filters(filters);
+        // One connection to Steam, shared: the browser searches over it and
+        // the library unsubscribes over it, and a second would be a second
+        // login and a second minute of connecting.
+        let workshop = Rc::new(Workshop::spawn());
+        let mut browser = Browser::with_filters(filters, Rc::clone(&workshop));
         browser.reconfigure(config.adult, config.per_page, config.infinite_scroll);
         browser.set_install_root(config.install_root());
         let mut settings = Settings::default();
@@ -133,7 +140,7 @@ impl Haru {
             tab,
             previews: Previews::new(),
             browser,
-            library: Library::new(),
+            library: Library::new(workshop),
             preview,
             settings,
             config,
@@ -258,6 +265,36 @@ impl Haru {
                                 self.scanned = false;
                             }
                         }
+                    }
+
+                    // Which screen everything applies to, where both tabs can
+                    // see it: the Workshop downloads onto it and the Library
+                    // puts wallpapers on it, and it was only reachable from
+                    // one of them.
+                    let screens: Vec<String> = self
+                        .library
+                        .screens()
+                        .iter()
+                        .map(|screen| screen.name.clone())
+                        .collect();
+                    if !screens.is_empty() {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let chosen = self
+                                .library
+                                .target()
+                                .map_or_else(|| "Screen".to_owned(), str::to_owned);
+                            egui::ComboBox::from_id_salt("screen")
+                                .selected_text(chosen)
+                                .show_ui(ui, |ui| {
+                                    for screen in screens {
+                                        let picked = self.library.target() == Some(screen.as_str());
+                                        if ui.selectable_label(picked, &screen).clicked() {
+                                            self.library.set_target(screen);
+                                        }
+                                    }
+                                });
+                            ui.label(RichText::new("Applying to").small().color(theme::MUTED));
+                        });
                     }
                 });
             });

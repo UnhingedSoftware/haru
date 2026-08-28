@@ -45,6 +45,13 @@ pub enum Request {
     Browse(BrowseQuery),
     /// Count what a query matches, without fetching any of it.
     Count(BrowseQuery),
+    /// Tell Steam this account no longer wants an item.
+    Unsubscribe {
+        /// Which app's Workshop.
+        app: tapline_ids::AppId,
+        /// Which item.
+        item: tapline_ids::PublishedFileId,
+    },
     /// Download one item into a Steam library.
     Install {
         /// What to fetch, exactly as a search returned it — no second lookup.
@@ -70,6 +77,8 @@ pub enum Reply {
         /// Bytes expected, when the plan knows.
         total: u64,
     },
+    /// Steam has been told the account no longer wants an item.
+    Unsubscribed,
     /// An item is on disk, at this directory.
     Installed {
         /// Which item.
@@ -195,10 +204,7 @@ async fn install(
         .download_workshop_item_observed(item, &options, &mut observe)
         .await
     {
-        Ok(_) => Reply::Installed {
-            id: item_id,
-            dir,
-        },
+        Ok(_) => Reply::Installed { id: item_id, dir },
         // The one failure worth saying plainly: Wallpaper Engine's depot is
         // not anonymously accessible, and the fix is one command.
         Err(error) if error.needs_login() => Reply::Failed(
@@ -252,7 +258,22 @@ fn worker(requests: &Receiver<(RequestId, Request)>, replies: &Sender<(RequestId
                     Ok(total) => Reply::Count(total),
                     Err(error) => Reply::Failed(error.to_string()),
                 },
-                Request::Install { item, into } => install(session, &item, &into, replies, id).await,
+                Request::Install { item, into } => {
+                    install(session, &item, &into, replies, id).await
+                }
+                Request::Unsubscribe { app, item } => {
+                    match session.unsubscribe_workshop_item(app, item).await {
+                        Ok(()) => Reply::Unsubscribed,
+                        // Subscriptions belong to an account, so an anonymous
+                        // session has none to change — worth saying plainly,
+                        // because the files can still be removed.
+                        Err(error) if error.needs_login() => Reply::Failed(
+                            "unsubscribing needs a signed-in account — run `tapline login --qr`"
+                                .to_owned(),
+                        ),
+                        Err(error) => Reply::Failed(error.to_string()),
+                    }
+                }
             }
         });
 

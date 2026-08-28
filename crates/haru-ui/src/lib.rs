@@ -44,7 +44,8 @@ enum Status {
 
 /// The picker.
 pub struct Browser {
-    workshop: Workshop,
+    /// Shared with the library, which unsubscribes over the same connection.
+    workshop: std::rc::Rc<Workshop>,
     filters: Filters,
     /// What the search box holds, which is not a search until Enter.
     typed: String,
@@ -78,7 +79,7 @@ impl Browser {
     /// Opens the picker on the default view.
     #[must_use]
     pub fn new() -> Self {
-        Self::with_filters(Filters::new())
+        Self::with_filters(Filters::new(), std::rc::Rc::new(Workshop::spawn()))
     }
 
     /// Reruns the search with settings the window has changed.
@@ -100,8 +101,7 @@ impl Browser {
     /// What a command line, a URL handler or the studio hands over: the window
     /// should come up showing the answer rather than the front page.
     #[must_use]
-    pub fn with_filters(filters: Filters) -> Self {
-        let workshop = Workshop::spawn();
+    pub fn with_filters(filters: Filters, workshop: std::rc::Rc<Workshop>) -> Self {
         let awaiting = Some(workshop.send(Request::Browse(filters.to_query())));
 
         Self {
@@ -202,6 +202,8 @@ impl Browser {
                     self.downloading = None;
                     self.status = Status::Failed(why);
                 }
+                // Sent from the library, over the same connection.
+                Reply::Unsubscribed => {}
             }
         }
     }
@@ -468,7 +470,9 @@ impl Browser {
                     // liked, and the pane is 300 pixels wide.
                     ui.add(
                         egui::Label::new(
-                            RichText::new(plain_text(&found.item.title)).size(16.0).strong(),
+                            RichText::new(plain_text(&found.item.title))
+                                .size(16.0)
+                                .strong(),
                         )
                         .truncate(),
                     )
@@ -495,14 +499,11 @@ impl Browser {
 
                 let id = found.item.id.get();
                 let on_disk = self.installed.contains(&id)
-                    || self
-                        .install_root
-                        .as_ref()
-                        .is_some_and(|root| {
-                            root.join(format!("steamapps/workshop/content/431960/{id}"))
-                                .join("project.json")
-                                .is_file()
-                        });
+                    || self.install_root.as_ref().is_some_and(|root| {
+                        root.join(format!("steamapps/workshop/content/431960/{id}"))
+                            .join("project.json")
+                            .is_file()
+                    });
 
                 match self.downloading {
                     // This one, in flight.
@@ -517,17 +518,19 @@ impl Browser {
                             let share = done as f32 / total as f32;
                             share
                         };
-                        ui.add(
-                            egui::ProgressBar::new(share)
-                                .text(format!("{} of {}", human_size(done), human_size(total))),
-                        );
+                        ui.add(egui::ProgressBar::new(share).text(format!(
+                            "{} of {}",
+                            human_size(done),
+                            human_size(total)
+                        )));
                     }
                     // Something else is downloading; one at a time, because the
                     // session behind it is one connection.
                     Some(_) => {
                         ui.add_enabled(
                             false,
-                            egui::Button::new("Download").min_size(egui::vec2(ui.available_width(), 30.0)),
+                            egui::Button::new("Download")
+                                .min_size(egui::vec2(ui.available_width(), 30.0)),
                         );
                     }
                     None if on_disk => {
@@ -535,10 +538,7 @@ impl Browser {
                     }
                     None => {
                         if ui
-                            .add_sized(
-                                [ui.available_width(), 30.0],
-                                egui::Button::new("Download"),
-                            )
+                            .add_sized([ui.available_width(), 30.0], egui::Button::new("Download"))
                             .clicked()
                         {
                             match self.install_root.clone() {

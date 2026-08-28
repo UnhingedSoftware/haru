@@ -19,7 +19,11 @@ pub type Overrides = BTreeMap<String, String>;
 pub fn path(id: &str) -> Option<PathBuf> {
     // Ids come from directory names on disk, but a path is built from them, so
     // anything that could climb out of the directory is refused.
-    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if id.is_empty()
+        || !id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         return None;
     }
     let base = std::env::var_os("XDG_CONFIG_HOME")

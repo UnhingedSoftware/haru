@@ -63,7 +63,9 @@ impl Property {
     pub fn set_from_wire(&mut self, raw: &str) {
         match &mut self.kind {
             Kind::Bool(on) => *on = raw == "true" || raw == "1",
-            Kind::Slider { value, min, max, .. } => {
+            Kind::Slider {
+                value, min, max, ..
+            } => {
                 if let Ok(parsed) = raw.trim().parse::<f64>() {
                     *value = parsed.clamp(*min, *max);
                 }
