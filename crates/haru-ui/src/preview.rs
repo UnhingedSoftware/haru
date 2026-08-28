@@ -1,14 +1,3 @@
-//! Looking at a wallpaper, and changing it, without putting it up.
-//!
-//! The seed of the studio. A wallpaper is rendered off-screen, its own
-//! properties are on the right, and moving one re-renders — none of which
-//! touches whatever is actually on your screens.
-//!
-//! Rendering happens on a worker thread, one frame at a time, and only the
-//! newest request survives: dragging a slider produces a request per frame,
-//! and rendering every one of them would fall further behind the longer you
-//! drag.
-
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -20,54 +9,34 @@ use haru_core::{Installed, properties};
 
 use crate::theme;
 
-/// What the worker was asked for.
 struct Job {
     dir: PathBuf,
     properties: Vec<(String, String)>,
-    /// Which request this is, so a stale answer can be dropped.
     seq: u64,
 }
 
-/// What came back.
 struct Frame {
     seq: u64,
-    /// The frame, or why there is none.
     result: Result<Rendered, String>,
-    /// How long it took, which is worth showing while it is seconds.
     took: std::time::Duration,
 }
 
-/// How a frame arrived.
 enum Rendered {
-    /// Pixels straight from a running renderer.
     Live(haru_apply::Frame),
-    /// A PNG on disk, from a renderer with no streaming mode.
     Still(PathBuf),
 }
 
-/// The preview view.
 pub struct Preview {
-    /// What is being looked at.
     item: Option<Installed>,
-    /// Its properties, as edited here rather than on disk.
     settings: Vec<properties::Property>,
-    /// The frame on screen, waiting to become a texture.
     shown: Option<Rendered>,
-    /// A number for the texture, so a re-render is not mistaken for the cache.
     generation: u64,
     texture: Option<egui::TextureHandle>,
     status: String,
-    /// The newest request, and whether it is still out.
     seq: u64,
     waiting: bool,
     took: Option<std::time::Duration>,
-    /// Whether the preview is on screen.
-    ///
-    /// A renderer holds a wallpaper's textures — hundreds of megabytes for a
-    /// large scene — and holding them while another tab is showing is holding
-    /// them for nobody.
     watching: Arc<AtomicBool>,
-    /// The worker's inbox: only ever holds the latest request.
     pending: Arc<Mutex<Option<Job>>>,
     frames: Receiver<Frame>,
     wake: Sender<()>,
@@ -80,7 +49,6 @@ impl Default for Preview {
 }
 
 impl Preview {
-    /// An empty preview with its renderer waiting.
     #[must_use]
     pub fn new() -> Self {
         let pending: Arc<Mutex<Option<Job>>> = Arc::new(Mutex::new(None));
@@ -112,22 +80,16 @@ impl Preview {
         }
     }
 
-    /// Stops the renderer until the preview is looked at again.
-    ///
-    /// Called when another tab takes over. The wallpaper's textures go with
-    /// it; coming back costs the second it takes to build the scene again.
     pub fn suspend(&mut self) {
         self.watching.store(false, Ordering::Relaxed);
         let _ = self.wake.send(());
     }
 
-    /// What is being previewed, if anything.
     #[must_use]
     pub fn item(&self) -> Option<&Installed> {
         self.item.as_ref()
     }
 
-    /// Opens a wallpaper, reading its properties from disk.
     pub fn open(&mut self, item: Installed) {
         self.settings = properties::read(&item.dir);
         self.item = Some(item);
@@ -137,7 +99,6 @@ impl Preview {
         self.request();
     }
 
-    /// Asks for a frame with whatever the properties are now.
     fn request(&mut self) {
         let Some(item) = self.item.clone() else {
             return;
@@ -153,8 +114,6 @@ impl Preview {
             seq: self.seq,
         };
 
-        // Replaced rather than queued: a slider drag makes one of these per
-        // frame, and the only one worth rendering is the last.
         if let Ok(mut pending) = self.pending.lock() {
             *pending = Some(job);
         }
@@ -162,21 +121,12 @@ impl Preview {
         let _ = self.wake.send(());
     }
 
-    /// Draws the view.
     pub fn ui(&mut self, ctx: &egui::Context, sidebar: bool) {
-        // Waking on the way back in matters: the worker parks on the wake
-        // channel whenever nobody is watching, and the wake that a pending
-        // request sent may have been the one that parked it. Without this, a
-        // preview opened before its first frame — which is every preview
-        // opened from the command line — waits for a frame nobody is
-        // rendering.
         if !self.watching.swap(true, Ordering::Relaxed) {
             let _ = self.wake.send(());
         }
         self.collect(ctx);
 
-        // egui draws on events, and frames arriving on a channel are not one.
-        // Without this a streamed preview shows its first frame and stops.
         if self.item.is_some() {
             ctx.request_repaint();
         }
@@ -212,12 +162,8 @@ impl Preview {
             .show(ctx, |ui| self.canvas(ui));
     }
 
-    /// Takes any finished frame.
     fn collect(&mut self, ctx: &egui::Context) {
         while let Ok(frame) = self.frames.try_recv() {
-            // An answer to an edit that has already been superseded. Frames
-            // that keep arriving carry the seq of the edit they show, so a
-            // running stream matches until the next edit replaces it.
             if frame.seq != self.seq {
                 continue;
             }
@@ -234,8 +180,6 @@ impl Preview {
             }
         }
 
-        // Uploaded here rather than in the paint: a texture belongs to the
-        // context, and this is the one place that has both.
         if self.texture.is_none()
             && let Some(rendered) = self.shown.take()
         {
@@ -263,7 +207,6 @@ impl Preview {
         }
     }
 
-    /// The frame itself.
     fn canvas(&mut self, ui: &mut egui::Ui) {
         let Some(item) = self.item.clone() else {
             ui.centered_and_justified(|ui| {
@@ -304,7 +247,6 @@ impl Preview {
         }
     }
 
-    /// The wallpaper's own settings, edited here and nowhere else.
     fn properties(&mut self, ui: &mut egui::Ui) {
         ui.heading("Properties");
         ui.add_space(2.0);
@@ -353,29 +295,12 @@ impl Preview {
     }
 }
 
-/// The render loop.
-///
-/// Two ways of getting frames, and the good one is tried first: a renderer
-/// with `preview` streams them, so the wallpaper animates and an edit costs a
-/// rebuild. An older renderer has no such mode, and one screenshot per edit is
-/// the same picture arriving slower.
-///
-/// While a stream is up this loop never blocks on the UI — it reads frames as
-/// fast as the renderer sends them and checks for edits between each. With no
-/// stream there is nothing to do until something is asked for.
-/// Renders one job, reusing the open stream when it can.
-///
-/// Three ways down, in order of cost: the stream already showing this
-/// wallpaper takes the edits alone; a new stream is started for a different
-/// one; and where no streaming renderer exists at all, a still per edit —
-/// the same picture arriving slower.
 fn render(
     offscreen: &Offscreen,
     still: &std::path::Path,
     live: &mut Option<Live>,
     job: &Job,
 ) -> Result<Rendered, String> {
-    // A stream already showing this wallpaper only needs the edits.
     let updated = match live.as_mut() {
         Some(open) if open.dir == job.dir => open.update(&job.properties).ok(),
         _ => None,
@@ -389,8 +314,6 @@ fn render(
                 Ok(Rendered::Live(frame))
             }
             Err(_) => {
-                // No streaming renderer: one still per edit, which is the same
-                // picture arriving slower.
                 *live = None;
                 offscreen
                     .render(&job.dir, &job.properties, still)
@@ -412,8 +335,6 @@ fn worker(
     let mut seq: u64 = 0;
 
     loop {
-        // Nobody is looking: let the renderer go, and with it the wallpaper's
-        // textures. Dropping the stream stops the process it started.
         if !watching.load(Ordering::Relaxed) {
             live = None;
             if woken.recv().is_err() {
@@ -422,8 +343,6 @@ fn worker(
             continue;
         }
 
-        // Whatever is pending now, not whatever was pending when the wake was
-        // sent: several edits may have landed while the last frame rendered.
         let job = pending.lock().ok().and_then(|mut held| held.take());
 
         if let Some(job) = job {
@@ -442,18 +361,13 @@ fn worker(
             {
                 return;
             }
-            if failed {
-                // Nothing to pump; wait to be asked again rather than
-                // hammering a renderer that just refused.
-                if woken.recv().is_err() {
-                    return;
-                }
+            if failed && woken.recv().is_err() {
+                return;
             }
             continue;
         }
 
         let Some(open) = live.as_mut() else {
-            // Idle: nothing on screen to animate.
             if woken.recv().is_err() {
                 return;
             }
@@ -474,31 +388,21 @@ fn worker(
                     return;
                 }
             }
-            // A renderer that went away is not fatal: the next request starts
-            // another one.
             Err(_) => live = None,
         }
     }
 }
 
-/// A running preview stream, and which wallpaper it is showing.
 struct Live {
     dir: std::path::PathBuf,
     stream: PreviewStream,
 }
 
-/// How large a preview is rendered.
-///
-/// Wide enough to look at, small enough that a frame is 2 MB rather than the
-/// 3.7 MB of a 1280-wide one — which at thirty frames a second is the
-/// difference between 60 and 110 MB/s through a socket.
 const EDGE: u32 = 960;
 
-/// How many frames a second to ask for.
 const FPS: u32 = 30;
 
 impl Live {
-    /// Starts a renderer, applies the edits, and takes the first frame.
     fn start(
         binary: &std::path::Path,
         dir: &std::path::Path,
@@ -518,7 +422,6 @@ impl Live {
         ))
     }
 
-    /// Applies edits and returns the next frame.
     fn update(&mut self, properties: &[(String, String)]) -> Result<haru_apply::Frame, String> {
         for (key, value) in properties {
             self.stream.set_property(key, value)?;
@@ -540,8 +443,6 @@ mod tests {
 
     #[test]
     fn only_the_newest_edit_is_kept_to_render() {
-        // A slider drag makes one request per frame; rendering each in turn
-        // would fall further behind the longer the drag lasts.
         let preview = Preview::new();
         if let Ok(mut pending) = preview.pending.lock() {
             *pending = Some(Job {

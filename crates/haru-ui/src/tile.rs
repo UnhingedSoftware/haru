@@ -1,26 +1,11 @@
-//! One result in the grid.
-//!
-//! A square of preview art with the title and a line of numbers under it. The
-//! square is fixed so rows line up whatever shape the art is; art that does not
-//! match gets cropped rather than letterboxed, because a grid of
-//! different-sized pictures reads as broken.
-
 use egui::{Align, Color32, Layout, RichText, Rounding, Sense, Stroke, Vec2};
 use haru_core::{human_size, plain_text};
 use haru_media::Previews;
 use tapline::BrowseResult;
 
-/// How tall the caption under the art is.
 const CAPTION: f32 = 40.0;
 
-/// How wide each tile should be, and how many fit.
-///
-/// The obvious version — floor(width / tile) columns at a fixed tile size —
-/// leaves whatever does not divide evenly as dead space down the side of the
-/// grid. This spends the remainder on the tiles instead, so a row always
-/// reaches both edges.
 pub fn columns_for(available: f32, min_tile: f32, spacing: f32) -> (usize, f32) {
-    /// Past this a tile is a poster, not a thumbnail.
     const MAX_TILE: f32 = 260.0;
 
     let columns = ((available + spacing) / (min_tile + spacing))
@@ -30,7 +15,6 @@ pub fn columns_for(available: f32, min_tile: f32, spacing: f32) -> (usize, f32) 
     (columns as usize, width.max(min_tile))
 }
 
-/// Draws one tile. Returns whether it was clicked.
 pub fn show(
     ui: &mut egui::Ui,
     previews: &mut Previews,
@@ -40,9 +24,6 @@ pub fn show(
 ) -> bool {
     let title = plain_text(&found.item.title);
 
-    // Top-down explicitly: the grid puts tiles in a horizontal row, and a tile
-    // that inherits that lays its own caption out beside the picture instead
-    // of under it.
     let response = ui
         .allocate_ui_with_layout(
             Vec2::new(size, size + CAPTION),
@@ -59,12 +40,6 @@ pub fn show(
                 ui.painter()
                     .rect_filled(rect, rounding, ui.visuals().extreme_bg_color);
 
-                // Asked for every frame it is *visible*, and never otherwise.
-                // The grid does not track what it already has — asking is what
-                // starts a fetch and what keeps a picture from being swept —
-                // so a tile scrolled off the screen stops asking and its
-                // picture goes. A page of a hundred results then costs the
-                // dozen on screen rather than the hundred.
                 let picture = ui.is_rect_visible(rect).then(|| {
                     found
                         .preview_url
@@ -118,7 +93,6 @@ pub fn show(
     response.on_hover_text(title).clicked()
 }
 
-/// The numbers under a tile: what it is, how big, how well liked.
 fn meta(found: &BrowseResult) -> String {
     let kind = found
         .tags
@@ -143,13 +117,10 @@ mod tests {
 
     #[test]
     fn a_row_of_tiles_uses_the_whole_width() {
-        // The gap down the side of the grid was the remainder of a division
-        // nobody spent.
         for available in [600.0_f32, 741.0, 1280.0, 1919.0] {
             let (columns, width) = columns_for(available, 168.0, 8.0);
             let used = width * columns as f32 + 8.0 * (columns as f32 - 1.0);
             assert!(columns >= 1);
-            // Either the row fills the space, or the tiles hit their cap.
             assert!(
                 used >= available - 1.0 || width >= 259.0,
                 "{available}: {columns} x {width} = {used}"

@@ -1,14 +1,3 @@
-//! The picker window.
-//!
-//! A filter sidebar on the left, a grid of results in the middle, and a detail
-//! pane for whatever is selected. Steam's own layout, because that is the one
-//! people already know how to use.
-//!
-//! Two habits from the shell this replaces, both learned the hard way:
-//! searching happens on Enter rather than per keystroke — every keystroke is a
-//! round trip to a CM — and a page of results asks the cache for its pictures
-//! every frame, because the grid does not know what it already has.
-
 mod account;
 mod app;
 mod icons;
@@ -33,67 +22,38 @@ use haru_workshop::{Reply, Request, RequestId, Workshop};
 use std::path::PathBuf;
 use tapline::{BrowsePage, BrowseResult, BrowseSort, TextTarget};
 
-/// How wide a tile is, before spacing.
 const TILE: f32 = 168.0;
 
-/// What the window is doing.
 enum Status {
-    /// Nothing in flight.
     Idle,
-    /// A search is out.
     Searching,
-    /// Steam, or the connection, said no.
     Failed(String),
 }
 
-/// The picker.
 pub struct Browser {
-    /// Shared with the library, which unsubscribes over the same connection.
     workshop: std::rc::Rc<Workshop>,
     filters: Filters,
-    /// What the search box holds, which is not a search until Enter.
     typed: String,
     page: Option<BrowsePage>,
-    /// Results kept from earlier pages, when scrolling endlessly.
-    ///
-    /// Empty in paged mode: there, a page replaces the one before it.
     appended: Vec<BrowseResult>,
-    /// Whether results continue as the grid is scrolled.
     infinite: bool,
-    /// The search whose answer is still wanted.
-    ///
-    /// Answers arrive in whatever order Steam manages, and a picker changes
-    /// its mind constantly; without this a slow first search overwrites the
-    /// fast second one.
     awaiting: Option<RequestId>,
     status: Status,
     selected: Option<usize>,
-    /// Where a download lands, from the settings.
     install_root: Option<PathBuf>,
-    /// Whether a running Steam client can be asked to subscribe.
-    ///
-    /// The better route when it exists: Steam holds the depot key, so no login
-    /// here, and it downloads into the library this already reads.
     client: bool,
-    /// The download in flight, if any: its item, and how far it has got.
     downloading: Option<(u64, u64, u64)>,
-    /// The request the download's answers will carry.
     fetching: Option<RequestId>,
-    /// Items installed during this session, so a tile stops offering to fetch
-    /// what is already on disk.
     installed: Vec<u64>,
-    /// A wallpaper that just landed, for the window to put up.
     landed: Option<PathBuf>,
 }
 
 impl Browser {
-    /// Opens the picker on the default view.
     #[must_use]
     pub fn new() -> Self {
         Self::with_filters(Filters::new(), std::rc::Rc::new(Workshop::spawn()))
     }
 
-    /// Reruns the search with settings the window has changed.
     pub fn reconfigure(&mut self, adult: bool, per_page: u32, infinite: bool) {
         let same = self.filters.adult == adult
             && self.filters.per_page == per_page
@@ -107,10 +67,6 @@ impl Browser {
         self.search();
     }
 
-    /// Opens the picker on a search someone already knows they want.
-    ///
-    /// What a command line, a URL handler or the studio hands over: the window
-    /// should come up showing the answer rather than the front page.
     #[must_use]
     pub fn with_filters(filters: Filters, workshop: std::rc::Rc<Workshop>) -> Self {
         let awaiting = Some(workshop.send(Request::Browse(filters.to_query())));
@@ -134,30 +90,21 @@ impl Browser {
         }
     }
 
-    /// Takes the wallpaper that just finished downloading, if one did.
-    ///
-    /// Handed up rather than applied here: the browser does not own a screen
-    /// or a renderer, and downloading is not the same decision as displaying.
     pub fn take_landed(&mut self) -> Option<PathBuf> {
         self.landed.take()
     }
 
-    /// Tells the browser where downloads should go.
     pub fn set_install_root(&mut self, root: Option<PathBuf>) {
         self.install_root = root;
     }
 
-    /// Tells the browser whether a Steam client can do the fetching.
     pub fn set_client(&mut self, client: bool) {
         self.client = client;
     }
 
-    /// Draws a frame.
     pub fn ui(&mut self, ctx: &egui::Context, previews: &mut Previews, sidebar: bool) {
         self.collect();
 
-        // Same reason as the account state: a reply is not an event, so a
-        // window with nothing else happening would sleep on it.
         if self.awaiting.is_some() || self.fetching.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
         }
@@ -186,10 +133,6 @@ impl Browser {
             .show(ctx, |ui| self.grid(ui, previews));
     }
 
-    /// Takes the answers that belong to this view.
-    ///
-    /// Claimed by the request that asked, because the connection is shared and
-    /// an answer's shape does not say whose it is.
     fn collect(&mut self) {
         if let Some(id) = self.awaiting
             && let Some(reply) = self.workshop.take(id)
@@ -198,8 +141,6 @@ impl Browser {
             match reply {
                 Reply::Page(page) => {
                     self.selected = None;
-                    // Endless scrolling keeps what came before; paging
-                    // replaces it, which is the whole difference.
                     if self.infinite && self.filters.page > 1 {
                         if let Some(previous) = self.page.take() {
                             self.appended.extend(previous.items);
@@ -216,8 +157,6 @@ impl Browser {
             }
         }
 
-        // A download answers repeatedly — progress, then the outcome — so it
-        // keeps its request until one of the endings arrives.
         while let Some(id) = self.fetching
             && let Some(reply) = self.workshop.take(id)
         {
@@ -234,13 +173,9 @@ impl Browser {
                     self.downloading = None;
                     self.installed.push(item);
                     self.status = Status::Idle;
-                    // Straight onto a screen: asking for it was the decision,
-                    // and a second trip to see it is a step nobody wants.
                     self.landed = Some(dir);
                 }
                 Reply::Subscribed => {
-                    // Steam fetches it from here, into its own library — which
-                    // is the one the Library tab rescans.
                     self.fetching = None;
                     self.downloading = None;
                     self.status = Status::Idle;
@@ -255,9 +190,7 @@ impl Browser {
         }
     }
 
-    /// Runs the current filters, from the first page.
     fn search(&mut self) {
-        // The old search's answer is nobody's now.
         if let Some(id) = self.awaiting.take() {
             self.workshop.discard(id);
         }
@@ -267,7 +200,6 @@ impl Browser {
         self.run();
     }
 
-    /// Goes to one numbered page.
     fn go_to(&mut self, page: u32) {
         if self.awaiting.is_some() || page == self.filters.page {
             return;
@@ -276,13 +208,11 @@ impl Browser {
         self.run();
     }
 
-    /// Runs the current filters as they stand, cursor included.
     fn run(&mut self) {
         self.status = Status::Searching;
         self.awaiting = Some(self.workshop.send(Request::Browse(self.filters.to_query())));
     }
 
-    /// The filter sidebar.
     fn sidebar(&mut self, ui: &mut egui::Ui) {
         ui.add_space(8.0);
         ui.heading("haru");
@@ -315,9 +245,6 @@ impl Browser {
                 }
             });
 
-        // Only Steam's trend ranking honours a period; on any other sort the
-        // number is refused rather than quietly ignored, so the control only
-        // exists where it means something.
         if self.filters.sort == BrowseSort::Trend {
             ui.add_space(6.0);
             ui.label(RichText::new("Period").small().weak());
@@ -355,8 +282,6 @@ impl Browser {
         }
     }
 
-    /// Getting this wallpaper: the button, the bar, or the news that it is
-    /// already here.
     fn download_row(&mut self, ui: &mut egui::Ui, found: &BrowseResult) {
         let id = found.item.id.get();
         let on_disk = self.installed.contains(&id)
@@ -367,7 +292,6 @@ impl Browser {
             });
 
         match self.downloading {
-            // This one, in flight.
             Some((downloading, done, total)) if downloading == id => {
                 let share = if total == 0 {
                     0.0
@@ -385,8 +309,6 @@ impl Browser {
                     human_size(total)
                 )));
             }
-            // Something else is downloading; one at a time, because the
-            // session behind it is one connection.
             Some(_) => {
                 ui.add_enabled(
                     false,
@@ -401,9 +323,6 @@ impl Browser {
                     .add_sized([ui.available_width(), 30.0], egui::Button::new("Download"))
                     .clicked()
                 {
-                    // A running client is the better route: it holds
-                    // the depot key, so nothing here needs a login, and
-                    // it downloads into the library this already reads.
                     if self.client {
                         self.downloading = Some((id, 0, found.item.size));
                         self.fetching = Some(self.workshop.send(Request::SubscribeViaClient {
@@ -431,8 +350,6 @@ impl Browser {
         }
     }
 
-    /// The tiles themselves. Returns whether the end of the list is on screen,
-    /// which in endless mode is the request for the next page.
     fn tiles(
         &mut self,
         ui: &mut egui::Ui,
@@ -465,8 +382,6 @@ impl Browser {
                 }
 
                 if self.infinite {
-                    // A marker at the end of the list: once it is on screen,
-                    // there is nothing below and the next page is wanted.
                     let (rect, _) = ui
                         .allocate_exact_size(egui::vec2(ui.available_width(), 1.0), Sense::hover());
                     hit_bottom = ui.is_rect_visible(rect);
@@ -479,7 +394,6 @@ impl Browser {
         hit_bottom
     }
 
-    /// What fills the grid before there is anything to put in it.
     fn waiting_or_error(&self, ui: &mut egui::Ui) {
         ui.centered_and_justified(|ui| match &self.status {
             Status::Failed(why) => {
@@ -491,7 +405,6 @@ impl Browser {
         });
     }
 
-    /// The numbered strip: first, last, and a window around where you are.
     fn page_strip(&mut self, ui: &mut egui::Ui, total: u32) {
         let pages = self.filters.pages(total);
         let current = self.filters.page;
@@ -509,8 +422,6 @@ impl Browser {
                 jump = Some(current.saturating_add(1));
             }
 
-            // Right to left, so the numbers are built backwards and read
-            // forwards.
             for number in strip(current, pages).into_iter().rev() {
                 match number {
                     Some(number) if number == current => {
@@ -546,11 +457,6 @@ impl Browser {
         });
     }
 
-    /// The search box, and where a search looks.
-    ///
-    /// Searching happens on Enter rather than per keystroke: every search is a
-    /// round trip to Steam, and one per letter is a query storm that answers
-    /// out of order.
     fn search_box(&mut self, ui: &mut egui::Ui) {
         let search = ui.add(
             egui::TextEdit::singleline(&mut self.typed)
@@ -583,7 +489,6 @@ impl Browser {
         }
     }
 
-    /// The six filter axes. Returns whether one changed.
     fn tag_groups(&mut self, ui: &mut egui::Ui) -> bool {
         let mut changed = false;
         egui::ScrollArea::vertical()
@@ -627,14 +532,11 @@ impl Browser {
         changed
     }
 
-    /// The result grid.
     fn grid(&mut self, ui: &mut egui::Ui, previews: &mut Previews) {
         if self.page.is_none() {
             self.waiting_or_error(ui);
             return;
         }
-        // In endless mode this is every result loaded so far; in paged mode
-        // the kept list is empty and this is just the page.
         let items: Vec<BrowseResult> = self
             .appended
             .iter()
@@ -649,8 +551,6 @@ impl Browser {
             return;
         }
 
-        // Whatever fits, at a size that uses the whole width — a fixed tile
-        // leaves the remainder as a gap down the side of the grid.
         let (columns, tile_width) = tile::columns_for(ui.available_width(), TILE, 8.0);
 
         let hit_bottom = self.tiles(ui, previews, &items, columns, tile_width);
@@ -663,7 +563,6 @@ impl Browser {
         }
     }
 
-    /// The detail pane for one result.
     fn detail(&mut self, ui: &mut egui::Ui, previews: &mut Previews, index: usize) {
         let Some(found) = self
             .appended
@@ -681,8 +580,6 @@ impl Browser {
             .show(ui, |ui| {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    // Truncated: a Workshop title runs as long as its author
-                    // liked, and the pane is 300 pixels wide.
                     ui.add(
                         egui::Label::new(
                             RichText::new(plain_text(&found.item.title))
@@ -747,7 +644,6 @@ impl Browser {
             });
     }
 
-    /// The status and paging bar.
     fn paging(&mut self, ui: &mut egui::Ui, previews: &mut Previews) {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
@@ -769,8 +665,6 @@ impl Browser {
                 }
             }
 
-            // Endless scrolling has no pages to number, and a strip that said
-            // "page 3 of 400" beside a grid that never ends would be a lie.
             if self.infinite {
                 let shown =
                     self.appended.len() + self.page.as_ref().map_or(0, |page| page.items.len());
@@ -792,7 +686,6 @@ impl Default for Browser {
     }
 }
 
-/// What a sort is called in the window.
 const fn sort_label(sort: BrowseSort) -> &'static str {
     match sort {
         BrowseSort::Vote => "Top rated",
@@ -804,7 +697,6 @@ const fn sort_label(sort: BrowseSort) -> &'static str {
     }
 }
 
-/// What a trend window is called.
 fn period_label(days: Option<u32>) -> String {
     days.map_or_else(
         || "Today".to_owned(),
@@ -817,13 +709,7 @@ fn period_label(days: Option<u32>) -> String {
     )
 }
 
-/// Which page numbers to show around the current one.
-///
-/// `None` is a gap. Wallpaper Engine's Workshop is 130,000 pages of twenty-four,
-/// so every number is not an option and the ends have to be reachable anyway:
-/// the first, the last, and a window around where you are.
 fn strip(current: u32, pages: u32) -> Vec<Option<u32>> {
-    /// How many either side of the current page.
     const AROUND: u32 = 2;
 
     if pages <= 1 {
@@ -836,7 +722,6 @@ fn strip(current: u32, pages: u32) -> Vec<Option<u32>> {
     let mut out = Vec::new();
     if first_shown > 1 {
         out.push(Some(1));
-        // A gap of exactly one page is worth spelling out rather than hiding.
         if first_shown > 3 {
             out.push(None);
         } else if first_shown == 3 {
@@ -857,7 +742,6 @@ fn strip(current: u32, pages: u32) -> Vec<Option<u32>> {
     out
 }
 
-/// A count with separators, because six digits are unreadable without them.
 fn thousands(value: u64) -> String {
     let digits = value.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
@@ -876,8 +760,6 @@ mod tests {
 
     #[test]
     fn the_page_strip_always_reaches_both_ends() {
-        // Whatever the window shows, page one and the last page must be one
-        // click away, or a deep search is a trap.
         for (current, pages) in [
             (1_u32, 1_u32),
             (1, 9),
@@ -897,15 +779,11 @@ mod tests {
 
     #[test]
     fn the_strip_stays_short_however_deep_the_results_go() {
-        // 132,618 pages is a real number for this Workshop; the strip has to
-        // be a fixed width regardless.
         assert!(strip(60_000, 132_618).len() <= 9);
     }
 
     #[test]
     fn a_gap_of_one_page_is_shown_rather_than_hidden() {
-        // "1 … 3 4 5" hides exactly one number behind an ellipsis that costs
-        // more space than the number would.
         let shown = strip(4, 20);
         assert_eq!(shown.first(), Some(&Some(1)));
         assert_eq!(shown.get(1), Some(&Some(2)), "{shown:?}");

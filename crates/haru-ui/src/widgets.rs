@@ -1,16 +1,6 @@
-//! Controls that more than one view draws.
-//!
-//! A wallpaper's properties appear twice — beside the screen they are on, and
-//! in the preview — and they have to look and behave the same in both. One
-//! function, two callers.
-
 use egui::RichText;
 use haru_core::properties::{Kind, Property};
 
-/// Draws one property. Returns whether its value changed.
-///
-/// "Changed" means *settled*, not *touched*: a slider reports when the drag
-/// ends, because every intermediate value would otherwise rebuild a scene.
 pub fn property(ui: &mut egui::Ui, property: &mut Property) -> bool {
     match &mut property.kind {
         Kind::Bool(on) => ui

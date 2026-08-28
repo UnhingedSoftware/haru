@@ -1,46 +1,18 @@
-//! What is already installed.
-//!
-//! An installed wallpaper is a directory with a `project.json` in it, and that
-//! file is the whole of what a picker needs: a title, a kind and the name of a
-//! preview image beside it. Nothing here decodes a scene — a picker shows
-//! artwork and hands the directory to whatever renders it.
-//!
-//! Steam's own layout is the one to read, because it is where Steam, Wallpaper
-//! Engine, kirie and haru all agree an item lives:
-//! `<library>/steamapps/workshop/content/431960/<id>`.
-
 use std::path::{Path, PathBuf};
 
-/// Wallpaper Engine's Workshop content directory, under any Steam library.
 const CONTENT: &str = "steamapps/workshop/content/431960";
 
-/// One wallpaper on disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Installed {
-    /// The Workshop id, which is the directory's name.
     pub id: String,
-    /// Where it lives.
     pub dir: PathBuf,
-    /// Its title, or its id when `project.json` gives none.
     pub title: String,
-    /// `scene`, `video`, `web`, `application` — whatever the project says.
     pub kind: String,
-    /// The preview image beside the project file, when there is one.
     pub preview: Option<PathBuf>,
-    /// How much space it takes.
     pub size: u64,
-    /// When it arrived, from the directory's own timestamp.
-    ///
-    /// Steam does not record a subscription date anywhere a reader can get at,
-    /// and the directory's mtime is what "newest first" has to mean.
     pub installed: std::time::SystemTime,
 }
 
-/// Every Steam library on this machine.
-///
-/// The four well-known roots, plus whatever `libraryfolders.vdf` in each of
-/// them points at — a wallpaper on a second drive is invisible otherwise, and
-/// second drives are where large libraries live.
 #[must_use]
 pub fn steam_roots() -> Vec<PathBuf> {
     let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
@@ -71,13 +43,6 @@ pub fn steam_roots() -> Vec<PathBuf> {
     roots
 }
 
-/// The libraries `libraryfolders.vdf` names.
-///
-/// Not a VDF parser: the file is read for the second quoted string on any line
-/// whose first is `path` or a bare number, which covers both the modern
-/// per-library block and the old `"1" "/mnt/games"` form. A file it cannot
-/// make sense of yields nothing rather than an error, because a missing second
-/// library is a smaller problem than refusing to start.
 fn library_folders(root: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     for name in ["steamapps/libraryfolders.vdf", "config/libraryfolders.vdf"] {
@@ -97,7 +62,6 @@ fn library_folders(root: &Path) -> Vec<PathBuf> {
     found
 }
 
-/// Everything installed under these libraries, newest first.
 #[must_use]
 pub fn scan(roots: &[PathBuf]) -> Vec<Installed> {
     let mut items: Vec<Installed> = Vec::new();
@@ -111,8 +75,6 @@ pub fn scan(roots: &[PathBuf]) -> Vec<Installed> {
             if !dir.is_dir() {
                 continue;
             }
-            // The first library wins: the same id under two libraries is one
-            // wallpaper Steam happened to write twice.
             let id = dir
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
@@ -126,17 +88,11 @@ pub fn scan(roots: &[PathBuf]) -> Vec<Installed> {
         }
     }
 
-    // Newest first, which is what someone looking for what they just
-    // subscribed to wants.
     items.sort_by_key(|item| std::cmp::Reverse(item.installed));
     items
 }
 
-/// Reads one item directory, if it holds a wallpaper at all.
 fn read(dir: &Path, id: String) -> Option<Installed> {
-    // Unsubscribing leaves the directory behind when something else has
-    // written inside it — a renderer's cache, usually — so a directory with no
-    // project file is a ghost rather than a wallpaper.
     let project = std::fs::read_to_string(dir.join("project.json")).ok()?;
     let parsed: serde_json::Value = serde_json::from_str(&project).ok()?;
 
@@ -174,10 +130,6 @@ fn read(dir: &Path, id: String) -> Option<Installed> {
     })
 }
 
-/// How much space a directory takes, one level deep plus its subdirectories.
-///
-/// Walked rather than trusted to any index: nothing records an item's size on
-/// disk, and the number is what a library view exists to show.
 fn directory_size(dir: &Path) -> u64 {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return 0;
@@ -196,7 +148,6 @@ fn directory_size(dir: &Path) -> u64 {
 mod tests {
     use super::*;
 
-    /// A throwaway directory that cleans itself up.
     struct Scratch(PathBuf);
 
     impl Scratch {
@@ -234,7 +185,6 @@ mod tests {
         assert_eq!(found.len(), 1);
         let Some(item) = found.first() else { return };
         assert_eq!(item.id, "123");
-        // Titles carry the markup their authors typed.
         assert_eq!(item.title, "Neon & rain");
         assert_eq!(item.kind, "video");
         assert!(item.preview.is_some());
@@ -243,9 +193,6 @@ mod tests {
 
     #[test]
     fn a_directory_with_no_project_is_not_a_wallpaper() {
-        // Unsubscribing leaves these behind whenever a renderer has written a
-        // cache inside the item, and they would otherwise show as untitled
-        // wallpapers that cannot be applied.
         let scratch = Scratch::new("ghost");
         let dir = scratch
             .0
@@ -257,8 +204,6 @@ mod tests {
 
     #[test]
     fn a_missing_preview_file_is_not_reported_as_one() {
-        // project.json names a preview that unsubscribing removed; drawing it
-        // would be a broken image in the grid.
         let scratch = Scratch::new("preview");
         scratch.item("5", r#"{"title":"Gone","preview":"preview.jpg"}"#);
         let found = scan(std::slice::from_ref(&scratch.0));

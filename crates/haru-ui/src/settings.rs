@@ -1,56 +1,34 @@
-//! What the app itself is set to.
-//!
-//! Small on purpose. Every field here exists because it cannot be worked out:
-//! a Steam library in an unusual place, a renderer socket that is not the
-//! default. Anything that can be detected is detected instead of asked.
-
 use egui::RichText;
 use haru_apply::Backend;
 use haru_core::Config;
 
 use crate::theme;
 
-/// Something to do to the renderer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Renderer {
-    /// Start one, owning every screen.
     Start,
-    /// Replace the running one.
     Restart,
-    /// Stop the running one.
     Stop,
 }
 
-/// What the settings pane was asked for while it was drawn.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Actions {
-    /// Whether a setting changed and the config wants saving.
     pub changed: bool,
-    /// Whether to open the sign-in overlay.
     pub sign_in: bool,
-    /// Whether to forget the saved login.
     pub sign_out: bool,
-    /// Whether to offer installing a renderer.
     pub install: bool,
-    /// What to do to the renderer, if anything.
     pub renderer: Option<Renderer>,
 }
 
-/// The settings pane.
 #[derive(Default)]
 pub struct Settings {
-    /// The socket path being typed, before it is a path.
     socket: String,
-    /// The install directory being typed.
     install: String,
-    /// A library being added.
     library: String,
-    /// What the last save did.
     status: String,
 }
 
 impl Settings {
-    /// Fills the boxes from the config, for when the pane is first opened.
     pub fn sync(&mut self, config: &Config) {
         self.socket = config
             .socket
@@ -64,7 +42,6 @@ impl Settings {
             .unwrap_or_default();
     }
 
-    /// Draws the pane and reports what was asked of it.
     pub fn ui(
         &mut self,
         ctx: &egui::Context,
@@ -102,7 +79,6 @@ impl Settings {
         actions
     }
 
-    /// Who is signed in, and the two ways to change that.
     fn steam(
         &mut self,
         ui: &mut egui::Ui,
@@ -138,8 +114,6 @@ impl Settings {
             {
                 actions.sign_in = true;
             }
-            // Only offered when there is something to forget.
-            // tapline keeps the login; this asks it to stop.
             if signed_in.is_some()
                 && ui
                     .button(RichText::new("Disconnect").color(theme::DANGER))
@@ -153,10 +127,6 @@ impl Settings {
         ui.add_space(18.0);
     }
 
-    /// What is rendering, what it owns, and the controls for it.
-    ///
-    /// The socket belongs here rather than under a heading of its own: it is
-    /// the address of the thing this section is about.
     fn renderer(
         &mut self,
         ui: &mut egui::Ui,
@@ -167,18 +137,12 @@ impl Settings {
         ui.label(RichText::new("Renderer").strong());
         ui.add_space(4.0);
 
-        // The socket is the authority on whether it is running:
-        // it is what haru talks to. The process is looked up
-        // for what only a process can answer — which pid, and
-        // whether it can be signalled to stop.
         let engine = haru_apply::launch::pid();
         let answering = backend.is_some_and(Backend::available);
 
         match (answering, engine) {
             (true, _) => Self::running(ui, backend, engine, actions),
             (false, Some(pid)) => {
-                // A process without a socket: started without
-                // one, or still coming up.
                 ui.label(
                     RichText::new(format!("kirie is running as pid {pid} but not answering"))
                         .color(theme::MUTED),
@@ -255,8 +219,6 @@ impl Settings {
         ui.add_space(18.0);
     }
 
-    /// A renderer that is answering: what it is, what it owns, what can be
-    /// done to it.
     fn running(
         ui: &mut egui::Ui,
         backend: Option<&dyn Backend>,
@@ -271,9 +233,6 @@ impl Settings {
             })
             .color(theme::ACCENT),
         );
-        // Which screens it owns, because that is what
-        // decides whether a wallpaper can go on one
-        // without restarting it.
         if let Some(Ok(screens)) = backend.map(Backend::screens) {
             let names: Vec<&str> = screens.iter().map(|screen| screen.name.as_str()).collect();
             if !names.is_empty() {
@@ -297,8 +256,6 @@ impl Settings {
             {
                 actions.renderer = Some(Renderer::Restart);
             }
-            // Stopping is a signal, so it needs the
-            // process, not the socket.
             if engine.is_some() {
                 if ui
                     .button(RichText::new("Stop").color(theme::DANGER))
@@ -320,7 +277,6 @@ impl Settings {
         });
     }
 
-    /// Where downloads land.
     fn installing(&mut self, ui: &mut egui::Ui, config: &mut Config, actions: &mut Actions) {
         ui.label(RichText::new("Installing").strong());
         ui.add_space(4.0);
@@ -346,7 +302,6 @@ impl Settings {
         ui.add_space(18.0);
     }
 
-    /// The Steam libraries read for installed wallpapers.
     fn libraries(&mut self, ui: &mut egui::Ui, config: &mut Config, actions: &mut Actions) {
         ui.label(RichText::new("Steam libraries").strong());
         ui.add_space(4.0);
@@ -383,7 +338,6 @@ impl Settings {
         ui.add_space(18.0);
     }
 
-    /// How the Workshop tab behaves.
     fn browsing(ui: &mut egui::Ui, config: &mut Config, actions: &mut Actions) {
         ui.label(RichText::new("Browsing").strong());
         ui.add_space(4.0);
@@ -410,7 +364,6 @@ impl Settings {
         ui.add_space(18.0);
     }
 
-    /// Writing it all down, and where that went.
     fn saving(&mut self, ui: &mut egui::Ui, config: &Config) {
         ui.separator();
         ui.add_space(8.0);
@@ -436,7 +389,6 @@ impl Settings {
     }
 }
 
-/// A typed path, or nothing when the box is empty.
 fn path_or_none(raw: &str) -> Option<std::path::PathBuf> {
     let trimmed = raw.trim();
     (!trimmed.is_empty()).then(|| std::path::PathBuf::from(trimmed))
@@ -448,8 +400,6 @@ mod tests {
 
     #[test]
     fn an_empty_box_means_the_default_rather_than_an_empty_path() {
-        // A `Some("")` here would point the renderer at a socket called
-        // nothing, which fails in a way that reads as the renderer being down.
         assert_eq!(path_or_none("   "), None);
         assert_eq!(
             path_or_none(" /run/user/1000/lwe.sock "),

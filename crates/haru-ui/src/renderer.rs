@@ -1,15 +1,3 @@
-//! The first-run offer to install a renderer.
-//!
-//! haru draws no wallpapers. Without kirie it can browse, download and manage
-//! a library and put none of it on a screen, which is a strange thing for a
-//! wallpaper picker to be — so on a machine that has never had one, it offers
-//! to fetch it.
-//!
-//! Offers, rather than does. A background download of 32 MB that lands an
-//! executable in someone's `~/.local/bin` is not a thing to do quietly, so the
-//! machine is asked which build fits it, the answer is preselected, and a
-//! person confirms it.
-
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, channel};
 
@@ -19,50 +7,31 @@ use haru_core::human_size;
 
 use crate::theme;
 
-/// What the overlay is doing.
 enum Phase {
-    /// Waiting for someone to pick a build.
     Choosing,
-    /// Fetching, with bytes so far and expected.
     Working(u64, u64),
-    /// Installed, and where.
     Done(PathBuf),
-    /// Why it did not happen.
     Failed(String),
 }
 
-/// What the worker thread reports back.
 enum Note {
-    /// Bytes so far, bytes expected.
     Progress(u64, u64),
-    /// Installed, and where it went.
     Done(PathBuf),
-    /// Why it stopped.
     Failed(String),
 }
 
-/// What the overlay decided this frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
-    /// Still open, or not open at all.
     Nothing,
-    /// Turned down. Worth remembering, so it is not asked at every start.
     Dismissed,
-    /// A renderer was installed, of this flavour.
     Installed(Web),
 }
 
-/// The offer.
 pub struct Installer {
-    /// Whether it is on screen.
     open: bool,
-    /// Which build is selected.
     web: Web,
-    /// Whether the machine has a webkit to load.
     webkit: bool,
-    /// What it is doing.
     phase: Phase,
-    /// Where the worker's notes arrive.
     notes: Option<Receiver<Note>>,
 }
 
@@ -73,7 +42,6 @@ impl Default for Installer {
 }
 
 impl Installer {
-    /// A closed offer, with the build this machine suggests already chosen.
     #[must_use]
     pub fn new() -> Self {
         let webkit = install::webkit_present();
@@ -86,27 +54,22 @@ impl Installer {
         }
     }
 
-    /// Puts the offer on screen.
     pub fn offer(&mut self) {
         self.open = true;
         self.phase = Phase::Choosing;
     }
 
-    /// Whether it is on screen, so nothing else opens over it.
     #[must_use]
     pub const fn is_open(&self) -> bool {
         self.open
     }
 
-    /// Draws the overlay and reports anything it settled.
     pub fn ui(&mut self, ctx: &egui::Context) -> Outcome {
         self.collect(ctx);
         if !self.open {
             return Outcome::Nothing;
         }
 
-        // Everything behind it is dimmed and unclickable: this is in the way
-        // on purpose, and a half-interactive modal is worse than either kind.
         let screen = ctx.screen_rect();
         egui::Area::new(egui::Id::new("renderer-shade"))
             .order(egui::Order::Background)
@@ -161,18 +124,13 @@ impl Installer {
         if close {
             self.open = false;
             outcome = match self.phase {
-                // Installed and acknowledged: remember the flavour, so an
-                // update later fetches the same one.
                 Phase::Done(_) => Outcome::Installed(self.web),
-                // Turned down: do not ask again at every start.
                 _ => Outcome::Dismissed,
             };
         }
         outcome
     }
 
-    /// Whatever the overlay is doing right now: the choice, the bar, the
-    /// outcome. Returns whether a fetch was asked for.
     fn phase_ui(&mut self, ui: &mut egui::Ui, close: &mut bool) -> bool {
         let mut start = false;
         match &self.phase {
@@ -232,7 +190,6 @@ impl Installer {
         start
     }
 
-    /// The two builds, as something to pick between. Returns whether to fetch.
     fn choices(&mut self, ui: &mut egui::Ui) -> bool {
         let found = self.webkit;
         for (web, note) in [
@@ -254,8 +211,6 @@ impl Installer {
                 [ui.available_width(), 46.0],
                 egui::SelectableLabel::new(chosen, ""),
             );
-            // Painted over the label rather than into it: two lines of
-            // different sizes is not something a `SelectableLabel` draws.
             let inner = response.rect.shrink2(egui::vec2(10.0, 6.0));
             ui.painter().text(
                 inner.left_top(),
@@ -293,7 +248,6 @@ impl Installer {
         start
     }
 
-    /// Fetches the chosen build on a thread of its own.
     fn start(&mut self, ctx: &egui::Context) {
         let (notes, heard) = channel();
         let web = self.web;
@@ -335,7 +289,6 @@ impl Installer {
         }
     }
 
-    /// Takes whatever the worker has said since the last frame.
     fn collect(&mut self, ctx: &egui::Context) {
         let Some(notes) = self.notes.as_ref() else {
             return;
@@ -357,8 +310,6 @@ impl Installer {
         if finished {
             self.notes = None;
         } else if matches!(self.phase, Phase::Working(_, _)) {
-            // A download reports from another thread, and egui only draws when
-            // something happens to it.
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
         }
     }

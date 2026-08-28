@@ -19,8 +19,6 @@ tapline = { workspace = true }
 tapline-ids = { workspace = true }
 
 [dev-dependencies]
-# Already in the tree under egui's text stack; here only so the test can ask
-# the bundled subset whether it really carries every icon's codepoint.
 ttf-parser = { workspace = true }
 
 [lints]

@@ -1,80 +1,36 @@
-//! Preview art: fetched once, decoded once, kept.
-//!
-//! A page of results is twenty images from Steam's CDN, and a grid asks for
-//! every one of them on the same frame. Three rules keep that from being a
-//! stampede:
-//!
-//! * **A bounded number in flight.** Twenty parallel TLS handshakes to one host
-//!   is slower than six, and the rest of the page is not visible yet anyway.
-//! * **Scaled at decode.** A Workshop preview can be 4K; a tile is 150 px. A
-//!   full-size texture per tile is tens of megabytes of VRAM for pixels nobody
-//!   sees.
-//! * **Asked for once.** The grid re-requests every frame by design — it does
-//!   not know what it already has — so the cache, not the caller, remembers.
-
 use std::collections::HashMap;
 use std::io::Read as _;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 
-/// How many downloads run at once.
-///
-/// Six is the browser convention for one host and about where a page of
-/// previews stops getting faster.
 const IN_FLIGHT: usize = 6;
 
-/// The longest edge a decoded preview keeps.
-///
-/// Twice the tile so a preview stays sharp on a HiDPI screen, and no more.
 const MAX_EDGE: u32 = 320;
 
-/// How many decoded previews to keep at the very most.
-///
-/// A backstop under [`IDLE_FRAMES`], not the main limit: a preview is up to
-/// 320x320 RGBA, about 400 KB, so even a few hundred is worth capping.
 const KEEP: usize = 240;
 
-/// How many frames a picture may go unasked-for before it is dropped.
-///
-/// The real limit. A grid asks for exactly what it is drawing, every frame, so
-/// anything that stops being asked for has been scrolled past or belongs to a
-/// tab that is no longer showing — and a texture nobody draws is memory spent
-/// on nothing. About two seconds at sixty frames a second, which is long
-/// enough that scrolling up and down does not re-fetch what it just had.
 const IDLE_FRAMES: u64 = 120;
 
-/// Refuse anything larger, before decoding it.
-///
-/// Preview art is a few hundred kilobytes. Ten megabytes is not a preview, and
-/// decoding whatever arrives is how a picker gets an image bomb.
 const MAX_BYTES: usize = 10 * 1024 * 1024;
 
-/// What a tile knows about its picture.
 enum State {
-    /// Being fetched.
     Loading,
-    /// Ready to draw, and the frame it was last drawn on.
     Ready(egui::TextureHandle, u64),
-    /// Not coming: a dead link, a refusal, an undecodable body.
     Failed,
 }
 
-/// Decoded pixels on their way back from a worker.
 struct Decoded {
     url: String,
     image: Option<egui::ColorImage>,
 }
 
-/// Every preview this session has looked at.
 pub struct Previews {
     entries: HashMap<String, State>,
-    /// What was asked for, oldest first, so the oldest can be dropped.
     order: Vec<String>,
     queue: Arc<Mutex<Vec<String>>>,
     active: Arc<Mutex<usize>>,
     inbound: Receiver<Decoded>,
     outbound: Sender<Decoded>,
-    /// Which frame is being drawn, for deciding what has gone unused.
     frame: u64,
 }
 
@@ -85,7 +41,6 @@ impl Default for Previews {
 }
 
 impl Previews {
-    /// An empty cache.
     #[must_use]
     pub fn new() -> Self {
         let (outbound, inbound) = channel();
@@ -100,16 +55,9 @@ impl Previews {
         }
     }
 
-    /// The texture for `url`, starting a fetch if this is the first ask.
-    ///
-    /// Returns `None` while loading and after a failure alike: a tile draws a
-    /// placeholder either way, and telling them apart would only invite a
-    /// retry loop against a link that is still dead.
     pub fn texture(&mut self, ctx: &egui::Context, url: &str) -> Option<egui::TextureHandle> {
         self.drain(ctx);
 
-        // Asking is what keeps a picture alive: the sweep drops whatever the
-        // last couple of seconds of drawing did not ask for.
         let now = self.frame;
         match self.entries.get_mut(url) {
             Some(State::Ready(texture, seen)) => {
@@ -128,12 +76,6 @@ impl Previews {
         None
     }
 
-    /// The texture for a file already on this machine.
-    ///
-    /// Installed wallpapers keep their preview beside `project.json`, so the
-    /// library grid has nothing to download — but it still wants the same
-    /// decode-once-and-scale that remote art gets, and the same cache, so a
-    /// path goes through here rather than being loaded per frame.
     pub fn texture_path(
         &mut self,
         ctx: &egui::Context,
@@ -160,10 +102,6 @@ impl Previews {
         None
     }
 
-    /// Records a new entry, dropping the oldest once there are too many.
-    ///
-    /// Oldest-first rather than least-recently-used: browsing goes forward,
-    /// and the pictures behind you are the ones you have stopped looking at.
     fn remember(&mut self, key: String) {
         self.entries.insert(key.clone(), State::Loading);
         self.order.push(key);
@@ -173,41 +111,29 @@ impl Previews {
                 break;
             };
             self.order.remove(0);
-            // A picture still on its way is left alone: dropping it would let
-            // its worker finish into an entry nothing asked for.
             if !matches!(self.entries.get(&oldest), Some(State::Loading)) {
                 self.entries.remove(&oldest);
             }
         }
     }
 
-    /// Ends a frame, dropping every picture that frame did not draw.
-    ///
-    /// Called once per frame by the window. Without it a browser holds every
-    /// tile it has ever shown; with it, memory follows what is on screen.
     pub fn sweep(&mut self) {
         self.frame = self.frame.saturating_add(1);
         let now = self.frame;
 
         self.entries.retain(|_, state| match state {
-            // Still on its way: dropping it would let its worker finish into
-            // an entry nothing asked for.
             State::Loading => true,
             State::Ready(_, seen) => now.saturating_sub(*seen) <= IDLE_FRAMES,
-            // A dead link is remembered so it is not fetched again every
-            // frame, and it costs one entry rather than a picture.
             State::Failed => true,
         });
         self.order.retain(|key| self.entries.contains_key(key));
     }
 
-    /// How many previews are kept.
     #[must_use]
     pub fn held(&self) -> usize {
         self.entries.len()
     }
 
-    /// How many previews are still on their way.
     #[must_use]
     pub fn loading(&self) -> usize {
         self.entries
@@ -216,10 +142,6 @@ impl Previews {
             .count()
     }
 
-    /// Takes whatever workers have finished and turns it into textures.
-    ///
-    /// Uploading happens here rather than on the worker because a texture
-    /// belongs to the render context, which is not this thread's to touch.
     fn drain(&mut self, ctx: &egui::Context) {
         let now = self.frame;
         while let Ok(Decoded { url, image }) = self.inbound.try_recv() {
@@ -237,7 +159,6 @@ impl Previews {
         self.pump(ctx);
     }
 
-    /// Starts as many queued fetches as the limit allows.
     fn pump(&self, ctx: &egui::Context) {
         loop {
             let Ok(mut active) = self.active.lock() else {
@@ -261,9 +182,6 @@ impl Previews {
                 .spawn(move || {
                     let image = fetch(&url);
                     let _ = outbound.send(Decoded { url, image });
-                    // The frame that asked is long gone; without this the
-                    // picture only appears when something else causes a
-                    // repaint, which on an idle window is never.
                     ctx.request_repaint();
                 })
                 .ok();
@@ -271,16 +189,8 @@ impl Previews {
     }
 }
 
-/// Reads one preview, from wherever it is, scaled.
-///
-/// A local path and an `https` URL are the same job past the first few lines,
-/// and keeping them in one function is what makes both use the same size cap
-/// and the same scaling.
 fn fetch(source: &str) -> Option<egui::ColorImage> {
     if !source.starts_with("https://") {
-        // Anything that is not an https URL is a path on this machine. A
-        // plaintext URL is neither, and is refused rather than fetched: these
-        // strings arrive in a network reply.
         if source.contains("://") {
             return None;
         }
@@ -307,10 +217,6 @@ fn fetch(source: &str) -> Option<egui::ColorImage> {
     decode(&body)
 }
 
-/// Turns image bytes into something egui can upload, scaled down first.
-///
-/// Steam serves previews as JPEG, PNG and animated GIF alike, with the
-/// extension often absent from the URL, so the format comes from the bytes.
 fn decode(body: &[u8]) -> Option<egui::ColorImage> {
     let decoded = image::load_from_memory(body).ok()?;
     let scaled = decoded.thumbnail(MAX_EDGE, MAX_EDGE).to_rgba8();
@@ -325,7 +231,6 @@ fn decode(body: &[u8]) -> Option<egui::ColorImage> {
 mod tests {
     use super::*;
 
-    /// A texture handle to stand in for a decoded picture.
     fn texture() -> egui::TextureHandle {
         egui::Context::default().load_texture(
             "test",
@@ -336,8 +241,6 @@ mod tests {
 
     #[test]
     fn a_plain_http_url_is_refused_without_a_request() {
-        // The URLs arrive in a network reply; one of them pointing somewhere
-        // unencrypted should cost nothing at all.
         assert!(fetch("http://example.invalid/preview.jpg").is_none());
         assert!(fetch("ftp://example.invalid/preview.jpg").is_none());
     }
@@ -354,8 +257,6 @@ mod tests {
 
     #[test]
     fn a_picture_nobody_draws_is_dropped() {
-        // The point: memory follows what is on screen, not what has ever been
-        // on screen.
         let mut previews = Previews::new();
         previews
             .entries
@@ -365,7 +266,6 @@ mod tests {
             .insert("dropped".to_owned(), State::Ready(texture(), 0));
 
         for _ in 0..=IDLE_FRAMES {
-            // Only one of the two is asked for.
             if let Some(State::Ready(_, seen)) = previews.entries.get_mut("kept") {
                 *seen = previews.frame;
             }
@@ -378,7 +278,6 @@ mod tests {
 
     #[test]
     fn a_picture_still_arriving_is_never_swept() {
-        // Its worker would finish into an entry nothing asked for.
         let mut previews = Previews::new();
         previews.entries.insert("late".to_owned(), State::Loading);
         for _ in 0..(IDLE_FRAMES * 2) {
@@ -389,12 +288,9 @@ mod tests {
 
     #[test]
     fn the_cache_stops_growing() {
-        // Without a cap, every tile ever scrolled past stays decoded — which
-        // is hundreds of megabytes after an evening of browsing.
         let mut previews = Previews::new();
         for index in 0..(KEEP * 3) {
             previews.remember(format!("https://example.invalid/{index}.jpg"));
-            // Only entries that finished are droppable, and nothing here has.
             previews.entries.insert(
                 format!("https://example.invalid/{index}.jpg"),
                 State::Failed,

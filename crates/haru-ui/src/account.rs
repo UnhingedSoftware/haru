@@ -1,35 +1,13 @@
-//! The sign-in overlay.
-//!
-//! Browsing needs nothing, and downloading needs an account that owns
-//! Wallpaper Engine. There are two ways to have one and neither is obvious
-//! from a window, so this asks once, over whatever is behind it: scan a code,
-//! or let a running Steam client do it.
-//!
-//! An overlay rather than a page: it is a thing in the way of what you were
-//! doing, and it should look like one and be dismissable like one. Browsing
-//! carries on behind it.
-
 use egui::{Align, Color32, Layout, RichText};
 
 use crate::theme;
 
-/// What the overlay knows about signing in.
 pub struct Account {
-    /// Whether it is on screen.
     open: bool,
-    /// Who the saved login on this machine belongs to, if anyone.
     who: Option<String>,
-    /// Whether a running Steam client can be reached.
     client: bool,
-    /// The code being shown, and the texture it was drawn into.
-    ///
-    /// Kept together so a rotated code cannot be drawn as the previous
-    /// picture: Steam replaces the code mid-login, and a stale square is one
-    /// nobody can scan.
     code: Option<(String, Option<egui::TextureHandle>)>,
-    /// Whether a sign-in is in flight.
     waiting: bool,
-    /// The last thing that went wrong.
     status: String,
 }
 
@@ -40,7 +18,6 @@ impl Default for Account {
 }
 
 impl Account {
-    /// A closed overlay that knows nothing yet.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -53,10 +30,6 @@ impl Account {
         }
     }
 
-    /// Records what the connection said about the account.
-    ///
-    /// Opens itself the first time it learns there is no way to download —
-    /// which is the moment worth interrupting for, rather than on every start.
     pub fn observed(&mut self, saved: Option<String>, client: bool) {
         let knew_nothing = self.who.is_none() && !self.client;
         self.who = saved;
@@ -65,20 +38,17 @@ impl Account {
             self.open = true;
         }
         if self.who.is_some() {
-            // Signed in: nothing left to ask.
             self.open = false;
             self.waiting = false;
         }
     }
 
-    /// Shows a code to scan, replacing any previous one.
     pub fn show_code(&mut self, url: String) {
         self.code = Some((url, None));
         self.waiting = true;
         self.open = true;
     }
 
-    /// Records a finished sign-in.
     pub fn signed_in(&mut self, account: String) {
         self.who = Some(account);
         self.code = None;
@@ -86,61 +56,49 @@ impl Account {
         self.open = false;
     }
 
-    /// Records that the saved login is gone.
     pub fn signed_out(&mut self) {
         self.who = None;
         self.code = None;
         self.waiting = false;
         self.status.clear();
-        // Only worth asking again if there is now no way to download at all.
         self.open = !self.client;
     }
 
-    /// Records why signing in did not happen.
     pub fn failed(&mut self, why: String) {
         self.waiting = false;
         self.code = None;
         self.status = why;
     }
 
-    /// Opens the overlay, for a button that asks to sign in.
     pub fn open(&mut self) {
         self.open = true;
     }
 
-    /// Whether a sign-in is in flight, so its failures land here.
     #[must_use]
     pub const fn waiting(&self) -> bool {
         self.waiting
     }
 
-    /// Whether downloading is possible at all.
     #[must_use]
     pub const fn can_download(&self) -> bool {
         self.who.is_some() || self.client
     }
 
-    /// Who the saved login belongs to, if there is one.
     #[must_use]
     pub fn who(&self) -> Option<&str> {
         self.who.as_deref()
     }
 
-    /// Whether a running Steam client can do the fetching.
     #[must_use]
     pub const fn has_client(&self) -> bool {
         self.client
     }
 
-    /// Draws the overlay. Returns true when a sign-in was asked for.
     pub fn ui(&mut self, ctx: &egui::Context) -> bool {
         if !self.open {
             return false;
         }
 
-        // Everything behind it is dimmed and unclickable: the overlay is in
-        // the way on purpose, and half-interactive modals are worse than
-        // either kind.
         let screen = ctx.screen_rect();
         egui::Area::new(egui::Id::new("account-shade"))
             .order(egui::Order::Background)
@@ -222,9 +180,6 @@ impl Account {
 }
 
 impl Account {
-    /// The two ways in: a code to scan, or a client already signed in.
-    ///
-    /// Returns whether a sign-in was asked for.
     fn routes(&mut self, ui: &mut egui::Ui) -> bool {
         let mut asked = false;
         match self.code.as_mut() {
@@ -291,9 +246,6 @@ impl Account {
                         )
                         .clicked()
                     {
-                        // The URL rather than the binary: it is what a
-                        // desktop file would run, and it works whether
-                        // Steam is native, Flatpak or Snap.
                         let _ = std::process::Command::new("xdg-open")
                             .arg("steam://open/main")
                             .spawn();
@@ -305,13 +257,7 @@ impl Account {
     }
 }
 
-/// Draws a QR code for a URL.
-///
-/// Two pixels per module and a quiet border, because a phone camera needs the
-/// margin as much as the squares — a code drawn edge to edge often will not
-/// scan at all.
 fn render(url: &str) -> egui::ColorImage {
-    /// Modules of empty space around the code.
     const QUIET: usize = 4;
 
     let Ok(code) = qrcode::QrCode::new(url.as_bytes()) else {
@@ -345,7 +291,6 @@ mod tests {
 
     #[test]
     fn a_code_is_square_and_has_its_quiet_border() {
-        // A code drawn edge to edge often will not scan.
         let image = render("https://s.team/q/1/2");
         assert_eq!(image.size[0], image.size[1]);
         assert_eq!(image.pixels.first(), Some(&Color32::WHITE));
@@ -354,8 +299,6 @@ mod tests {
 
     #[test]
     fn it_asks_only_when_there_is_no_way_to_download() {
-        // Opening over someone who can already download is an interruption
-        // with nothing behind it.
         let mut account = Account::new();
         account.observed(None, true);
         assert!(!account.open, "a running client is a way to download");
@@ -384,8 +327,6 @@ mod tests {
 
     #[test]
     fn a_rotated_code_replaces_the_picture_of_the_old_one() {
-        // Steam hands back a new code mid-login; drawing the previous texture
-        // would leave an unscannable square on screen.
         let mut account = Account::new();
         account.show_code("first".to_owned());
         account.show_code("second".to_owned());

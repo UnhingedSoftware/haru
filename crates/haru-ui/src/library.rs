@@ -1,9 +1,3 @@
-//! What is already installed, and what is on each screen.
-//!
-//! The other half of a picker: the Workshop tab finds wallpapers, this one
-//! puts them up. A screen is picked on the left, a wallpaper in the middle,
-//! and the two together are the whole interaction.
-
 use std::path::PathBuf;
 
 use egui::{Align, Layout, RichText, Rounding, Sense, Stroke, Vec2};
@@ -14,26 +8,18 @@ use haru_workshop::{Reply, Request, Workshop};
 
 use crate::theme;
 
-/// How wide a wallpaper tile is.
 const TILE: f32 = 168.0;
 
-/// How a library can be ordered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Order {
-    /// Most recently installed first.
     Newest,
-    /// Least recently installed first.
     Oldest,
-    /// By title.
     Name,
-    /// By kind, then title.
     Kind,
-    /// Largest first, which is what someone reclaiming disk wants.
     Size,
 }
 
 impl Order {
-    /// What it is called in the window.
     const fn label(self) -> &'static str {
         match self {
             Self::Newest => "Newest",
@@ -44,7 +30,6 @@ impl Order {
         }
     }
 
-    /// Every order, in the order they are offered.
     const ALL: [Self; 5] = [
         Self::Newest,
         Self::Oldest,
@@ -54,57 +39,25 @@ impl Order {
     ];
 }
 
-/// The installed-wallpaper view.
 pub struct Library {
     items: Vec<Installed>,
-    /// What the filter box holds. Local, so it costs nothing to type.
     filter: String,
     order: Order,
     selected: Option<usize>,
-    /// Which screen an apply goes to.
     target: Option<String>,
     screens: Vec<Screen>,
-    /// The last thing that happened, shown in the bar.
     status: String,
-    /// The item a delete is waiting to be confirmed for.
-    ///
-    /// Deleting is the one irreversible thing here — Steam has to be told to
-    /// unsubscribe separately or it downloads the item again — so it asks.
     confirming: Option<String>,
-    /// The settings of the wallpaper the sidebar is showing.
     settings: Vec<properties::Property>,
-    /// Which wallpaper those settings belong to.
-    ///
-    /// Read from disk, so they are reread when the subject changes rather than
-    /// on every frame.
     settings_for: Option<PathBuf>,
-    /// The connection unsubscribing goes over, shared with the browser.
     workshop: std::rc::Rc<Workshop>,
-    /// The unsubscribe in flight, so its failure lands here and not elsewhere.
     unsubscribing: Option<haru_workshop::RequestId>,
-    /// The screens the engine actually owns.
-    ///
-    /// Not the same list as `screens`, and the difference decides everything:
-    /// a `bg` for a screen the engine was not started with is accepted and
-    /// draws nothing, because there is no surface on that output to draw on.
-    /// Putting a wallpaper there needs the engine relaunched owning it.
     owned: Vec<String>,
-    /// What was just put on a screen, for whoever remembers such things.
     applied: Option<(String, PathBuf)>,
-    /// A wallpaper picked while nothing was rendering.
-    ///
-    /// kirie takes its first wallpaper on the command line, so a click with no
-    /// engine running is not a failure — it is the argument the engine has
-    /// been waiting for. Handed up rather than acted on here, because starting
-    /// one takes seconds and this runs on the drawing thread.
     pending: Option<(String, PathBuf)>,
 }
 
 impl Library {
-    /// Takes anything the connection has answered.
-    ///
-    /// Only unsubscribes are sent from here, so anything else belongs to the
-    /// browser and is left for it.
     fn collect(&mut self) {
         if let Some(id) = self.unsubscribing
             && let Some(reply) = self.workshop.take(id)
@@ -120,7 +73,6 @@ impl Library {
 }
 
 impl Library {
-    /// An empty library, before anything is scanned.
     #[must_use]
     pub fn new(workshop: std::rc::Rc<Workshop>) -> Self {
         Self {
@@ -142,13 +94,11 @@ impl Library {
         }
     }
 
-    /// The screens the renderer knows about.
     #[must_use]
     pub fn screens(&self) -> &[Screen] {
         &self.screens
     }
 
-    /// What a wallpaper directory is called, for anything showing a screen.
     #[must_use]
     pub fn title_of(&self, dir: &std::path::Path) -> Option<String> {
         self.items
@@ -157,18 +107,15 @@ impl Library {
             .map(|item| item.title.clone())
     }
 
-    /// Which screen an apply goes to.
     #[must_use]
     pub fn target(&self) -> Option<&str> {
         self.target.as_deref()
     }
 
-    /// Chooses the screen an apply goes to.
     pub fn set_target(&mut self, screen: String) {
         self.target = Some(screen);
     }
 
-    /// Rereads the libraries and the screens.
     pub fn refresh(&mut self, config: &Config, backend: Option<&dyn Backend>) {
         self.items = library::scan(&config.libraries());
         let live: Vec<Screen> = backend
@@ -176,10 +123,6 @@ impl Library {
             .unwrap_or_default();
         self.owned = live.iter().map(|screen| screen.name.clone()).collect();
 
-        // Every screen the machine has, whether or not the engine owns it: an
-        // engine has to be told which outputs to own when it starts, which is
-        // exactly when there is no engine to name them. The ones it does own
-        // keep what it says is on them.
         self.screens = live;
         for name in haru_apply::launch::connectors() {
             if !self.screens.iter().any(|screen| screen.name == name) {
@@ -195,7 +138,6 @@ impl Library {
         self.selected = None;
     }
 
-    /// Draws the view.
     pub fn ui(
         &mut self,
         ctx: &egui::Context,
@@ -204,8 +146,6 @@ impl Library {
         backend: Option<&dyn Backend>,
         sidebar: bool,
     ) {
-        // Whatever the connection has answered since the last frame — an
-        // unsubscribe is sent from here, and its outcome belongs in the bar.
         self.collect();
         if self.unsubscribing.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
@@ -249,7 +189,6 @@ impl Library {
             .show(ctx, |ui| self.grid(ui, previews, backend));
     }
 
-    /// Screens on the left, with what is on them.
     fn sidebar(&mut self, ui: &mut egui::Ui, config: &Config, backend: Option<&dyn Backend>) {
         ui.heading("Library");
         ui.label(
@@ -288,7 +227,6 @@ impl Library {
         }
     }
 
-    /// The wallpapers themselves.
     fn grid(&mut self, ui: &mut egui::Ui, previews: &mut Previews, backend: Option<&dyn Backend>) {
         let shown = self.shown();
 
@@ -322,10 +260,6 @@ impl Library {
                                 tile_width,
                                 self.selected == Some(*index),
                             );
-                            // Clicking a wallpaper puts it up. Selecting was
-                            // the old meaning and is still what happens — the
-                            // pane opens on it — but choosing a wallpaper in a
-                            // wallpaper picker means wanting to see it.
                             if response.clicked() {
                                 self.selected = Some(*index);
                                 if let Some(target) = self.target.clone() {
@@ -343,7 +277,6 @@ impl Library {
         }
     }
 
-    /// One wallpaper, in full.
     fn detail(
         &mut self,
         ui: &mut egui::Ui,
@@ -359,9 +292,6 @@ impl Library {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                // Everything in the pane is bounded by it: a Workshop title
-                // runs as long as its author liked, and an unbounded label is
-                // drawn straight past the panel's edge.
                 ui.set_max_width(ui.available_width());
 
                 ui.horizontal(|ui| {
@@ -372,8 +302,6 @@ impl Library {
                         {
                             self.selected = None;
                         }
-                        // An icon, not a row of buttons: opening the page is
-                        // one thing you occasionally want, not a decision.
                         if crate::icons::button(ui, crate::icons::Icon::External, false)
                             .on_hover_text("Open the Workshop page")
                             .clicked()
@@ -412,9 +340,6 @@ impl Library {
 
                 ui.add_space(12.0);
 
-                // No Apply button: clicking the wallpaper in the grid is what
-                // applies it, and a second way to do the same thing is a
-                // button asking to be pressed for no reason.
                 if self.confirming.as_deref() == Some(item.id.as_str()) {
                     ui.label(
                         RichText::new("Remove it and tell Steam you no longer want it?")
@@ -458,11 +383,6 @@ impl Library {
             });
     }
 
-    /// Removes a wallpaper, and the reason Steam would bring it back.
-    ///
-    /// Both halves, because either alone leaves the job half done: the files
-    /// go, and Steam is told the account no longer wants the item — otherwise
-    /// the client downloads it again on its next sync.
     fn unsubscribe(&mut self, item: &Installed) {
         self.confirming = None;
 
@@ -483,10 +403,6 @@ impl Library {
         };
     }
 
-    /// Puts a wallpaper on whichever screen is chosen.
-    ///
-    /// What a finished download asks for: the browser has a directory and no
-    /// screen, and this is the half that knows which one.
     pub fn apply_to_target(&mut self, dir: &std::path::Path, backend: Option<&dyn Backend>) {
         let Some(screen) = self
             .target
@@ -499,33 +415,18 @@ impl Library {
         self.apply(&screen, dir, backend);
     }
 
-    /// Takes what was last put on a screen, so it can be remembered.
     pub fn take_applied(&mut self) -> Option<(String, PathBuf)> {
         self.applied.take()
     }
 
-    /// Takes the wallpaper waiting for an engine to be started for it.
     pub fn take_pending(&mut self) -> Option<(String, PathBuf)> {
         self.pending.take()
     }
 
-    /// Says something in the status bar, for work done on someone else's
-    /// behalf.
     pub fn say(&mut self, what: impl Into<String>) {
         self.status = what.into();
     }
 
-    /// What this wallpaper can be told to do, and where telling it goes.
-    ///
-    /// Editable only while it is on a screen: a property is a message to a
-    /// loaded wallpaper, and there is nothing to send it to otherwise. Shown
-    /// either way, because "what can this one do" is worth answering before
-    /// you commit to putting it up.
-    ///
-    /// The one place these appear. They were in the sidebar as well, for
-    /// whatever was on the chosen screen, which meant two panels of controls
-    /// on screen at once and a reader having to work out which wallpaper each
-    /// belonged to.
     fn properties_of(
         &mut self,
         ui: &mut egui::Ui,
@@ -564,9 +465,6 @@ impl Library {
         let mut changed: Option<(String, String)> = None;
         let mut reset = false;
 
-        // No scroll area of its own: the pane already scrolls, and a list
-        // inside a list means the outer one stops at a boundary the reader
-        // cannot see.
         ui.add_enabled_ui(live, |ui| {
             for property in &mut self.settings {
                 if crate::widgets::property(ui, property) {
@@ -591,8 +489,6 @@ impl Library {
 
         let Some((key, value)) = changed else { return };
 
-        // Kept first, so the change survives a renderer that refuses it and is
-        // staged again the next time this wallpaper goes up.
         if let Err(why) = overrides::set(&item.id, &key, &value) {
             self.status = why;
             return;
@@ -607,12 +503,6 @@ impl Library {
         };
     }
 
-    /// Reads a wallpaper's settings, with whatever was saved for it folded in.
-    ///
-    /// Only when the subject changes: this is a file read, and the pane draws
-    /// sixty times a second. Saved values are folded over the wallpaper's own
-    /// defaults so the panel shows what you last set rather than what it
-    /// shipped with.
     fn load_settings(&mut self, item: &Installed) {
         if self.settings_for.as_deref() == Some(item.dir.as_path()) {
             return;
@@ -630,36 +520,20 @@ impl Library {
         self.settings_for = Some(item.dir.clone());
     }
 
-    /// Applies one wallpaper and records what happened.
     fn apply(&mut self, screen: &str, dir: &std::path::Path, backend: Option<&dyn Backend>) {
-        // Nothing rendering, or nothing rendering *there*: either way this is
-        // a thing that can be fixed rather than reported, and whoever owns
-        // this view starts or relaunches an engine owning that screen. Saying
-        // so here would be guessing at the outcome.
-        //
-        // The ownership check is not caution: the engine accepts a `bg` for a
-        // screen it was not started with, loads the wallpaper and answers
-        // `ok`, and nothing appears — there is no surface on that output.
         let owns = self.owned.iter().any(|name| name == screen);
         let Some(backend) = backend.filter(|_| owns) else {
             self.pending = Some((screen.to_owned(), dir.to_owned()));
             return;
         };
 
-        // Staged before the build rather than set after it: a value applied
-        // afterwards means the wallpaper appears once with its defaults and
-        // then changes, which reads as a glitch.
         if let Some(item) = self.items.iter().find(|item| item.dir == dir) {
             for (key, value) in overrides::read(&item.id) {
-                // An older renderer without `stage` still gets the wallpaper
-                // up, without the saved changes, which beats refusing.
                 let _ = backend.stage(&key, &value);
             }
         }
         self.status = match backend.apply(screen, dir) {
             Ok(()) => {
-                // The screen now shows this, and the sidebar card should say
-                // so without waiting for a rescan.
                 if let Some(found) = self
                     .screens
                     .iter_mut()
@@ -674,7 +548,6 @@ impl Library {
         };
     }
 
-    /// The items the filter and order leave, with their real indices.
     fn shown(&self) -> Vec<(usize, Installed)> {
         let needle = self.filter.trim().to_lowercase();
         let mut shown: Vec<(usize, Installed)> = self
@@ -690,7 +563,6 @@ impl Library {
             .collect();
 
         match self.order {
-            // Already newest-first from the scan.
             Order::Newest => {}
             Order::Oldest => shown.reverse(),
             Order::Name => shown.sort_by_key(|(_, item)| item.title.to_lowercase()),
@@ -703,7 +575,6 @@ impl Library {
     }
 }
 
-/// One installed wallpaper in the grid.
 fn tile(
     ui: &mut egui::Ui,
     previews: &mut Previews,
@@ -724,8 +595,6 @@ fn tile(
             ui.painter()
                 .rect_filled(rect, rounding, ui.visuals().extreme_bg_color);
 
-            // Only while it is on screen: a tile scrolled past stops asking,
-            // and the sweep drops what nothing asked for.
             let picture = ui.is_rect_visible(rect).then(|| {
                 item.preview
                     .as_ref()
@@ -773,10 +642,7 @@ fn tile(
     .inner
 }
 
-/// Hands a path or a URL to the desktop.
 fn open(target: &std::path::Path) {
-    // Detached and ignored: whether a file manager opened is not something the
-    // picker can do anything about, and waiting on one would stall the frame.
     let _ = std::process::Command::new("xdg-open").arg(target).spawn();
 }
 
@@ -822,8 +688,6 @@ mod tests {
 
     #[test]
     fn ordering_by_name_ignores_case() {
-        // Otherwise every lowercase title sorts after every uppercase one,
-        // which reads as the sort being broken.
         let mut library = library();
         library.order = Order::Name;
         let titles: Vec<String> = library
@@ -836,7 +700,6 @@ mod tests {
 
     #[test]
     fn ordering_by_size_puts_the_biggest_first() {
-        // The order for reclaiming disk, so it has to be descending.
         let mut library = library();
         library.order = Order::Size;
         let sizes: Vec<u64> = library
@@ -849,9 +712,6 @@ mod tests {
 
     #[test]
     fn the_filter_keeps_real_indices_so_a_click_selects_what_was_clicked() {
-        // The grid draws a filtered list and stores the index it is given; if
-        // that were the position in the filtered list, selecting would pick a
-        // different wallpaper as soon as anything was typed.
         let mut library = library();
         library.filter = "rain".to_owned();
         assert_eq!(library.shown().first().map(|(index, _)| *index), Some(1));
@@ -859,16 +719,12 @@ mod tests {
 
     #[test]
     fn applying_with_no_renderer_asks_for_one_to_be_started() {
-        // kirie takes its first wallpaper on the command line, so a click with
-        // nothing running is the argument an engine has been waiting for
-        // rather than an error to report.
         let mut library = library();
         library.apply("DP-1", std::path::Path::new("/tmp/1"), None);
         assert_eq!(
             library.take_pending(),
             Some(("DP-1".to_owned(), PathBuf::from("/tmp/1")))
         );
-        // Taken once: a second frame must not start a second engine.
         assert_eq!(library.take_pending(), None);
     }
 }

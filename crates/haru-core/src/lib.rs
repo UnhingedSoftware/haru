@@ -1,9 +1,3 @@
-//! What haru knows with no window open.
-//!
-//! The filter vocabulary and the state of a search live here rather than in
-//! the UI, so the same query can be built by a window, a command line or the
-//! studio later. Nothing in this crate draws anything or touches a platform.
-
 pub mod config;
 pub mod library;
 pub mod overrides;
@@ -15,28 +9,13 @@ pub use properties::Property;
 
 use tapline::{BrowseQuery, BrowseSort, ContentDescriptor, TextTarget, TimeRange};
 
-/// Wallpaper Engine.
 pub const WALLPAPER_ENGINE: tapline_ids::AppId = tapline_ids::AppId(431_960);
 
-/// One axis of Steam's filter sidebar.
-///
-/// Steam's own semantics are one tag from each axis: ticking Scene and Video
-/// under Type and Anime under Genre means *(Scene or Video) and Anime*. That
-/// is what [`Filters::to_query`] builds, and it is why the axes are separate
-/// values rather than one list of tags.
 pub struct TagGroup {
-    /// What the axis is called.
     pub label: &'static str,
-    /// Every tag on it.
     pub tags: &'static [&'static str],
 }
 
-/// Wallpaper Engine's filter axes, in the order Steam shows them.
-///
-/// Hardcoded, and honestly so: PICS `app_info` does not carry the Workshop tag
-/// list — it reports branches and depots and nothing about tags — so there is
-/// nowhere to read this from. Results carry the tags they have, which is how a
-/// missing one gets noticed.
 pub const TAG_GROUPS: &[TagGroup] = &[
     TagGroup {
         label: "Type",
@@ -123,7 +102,6 @@ pub const TAG_GROUPS: &[TagGroup] = &[
     },
 ];
 
-/// How long a trend ranking looks back, as Steam offers it.
 pub const TREND_PERIODS: &[(&str, u32)] = &[
     ("Today", 1),
     ("This week", 7),
@@ -132,38 +110,20 @@ pub const TREND_PERIODS: &[(&str, u32)] = &[
     ("This year", 365),
 ];
 
-/// Everything a search is currently asking for.
-///
-/// Held as the UI's own state and turned into a [`BrowseQuery`] on the way
-/// out, so the widgets never assemble a wire request by hand.
 #[derive(Debug, Clone, Default)]
 pub struct Filters {
-    /// The text in the search box.
     pub text: String,
-    /// Where that text is matched.
     pub search_in: TextTarget,
-    /// One chosen tag per axis, indexed the same as [`TAG_GROUPS`].
     pub chosen: Vec<Option<String>>,
-    /// How to order results.
     pub sort: BrowseSort,
-    /// The trend window, when sorting by trend.
     pub trend_days: Option<u32>,
-    /// Only items revised since this moment.
     pub updated_since: Option<u32>,
-    /// Whether to let adult content through.
     pub adult: bool,
-    /// Which page, 1-based.
-    ///
-    /// A number rather than Steam's cursor: a cursor only walks forward, and
-    /// a strip that says 1 2 3 4 has to be able to go anywhere. Measured to
-    /// work at least a thousand pages deep.
     pub page: u32,
-    /// How many per page.
     pub per_page: u32,
 }
 
 impl Filters {
-    /// The state a picker opens with.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -174,7 +134,6 @@ impl Filters {
         }
     }
 
-    /// Whether anything is being filtered on beyond the defaults.
     #[must_use]
     pub fn is_narrowed(&self) -> bool {
         !self.text.is_empty()
@@ -182,14 +141,12 @@ impl Filters {
             || self.updated_since.is_some()
     }
 
-    /// How many pages a result count fills.
     #[must_use]
     pub const fn pages(&self, total: u32) -> u32 {
         let per_page = if self.per_page == 0 { 1 } else { self.per_page };
         total.div_ceil(per_page)
     }
 
-    /// Clears every filter, keeping the sort.
     pub fn clear(&mut self) {
         let sort = self.sort;
         let adult = self.adult;
@@ -198,15 +155,12 @@ impl Filters {
         self.adult = adult;
     }
 
-    /// Builds the query these filters describe.
     pub fn to_query(&self) -> BrowseQuery {
         let text = self.text.trim();
 
         BrowseQuery {
             app: WALLPAPER_ENGINE,
             text: (!text.is_empty()).then(|| text.to_owned()),
-            // Narrowing with no text to narrow is refused by tapline, and the
-            // box being empty is the ordinary state of a filter sidebar.
             search_in: if text.is_empty() {
                 TextTarget::Everything
             } else {
@@ -218,15 +172,12 @@ impl Filters {
                 .filter_map(|chosen| chosen.clone())
                 .map(|tag| vec![tag])
                 .collect(),
-            // Steam's own labels rather than the Mature tag: an author who
-            // never ticked the tag is still covered by the descriptor.
             excluded_descriptors: if self.adult {
                 Vec::new()
             } else {
                 vec![ContentDescriptor::AnyMature]
             },
             sort: self.sort,
-            // A window on any other sort is refused, since Steam ignores it.
             trend_days: (self.sort == BrowseSort::Trend)
                 .then_some(self.trend_days)
                 .flatten(),
@@ -241,7 +192,6 @@ impl Filters {
     }
 }
 
-/// Renders a byte count the way a person reads one.
 #[must_use]
 pub fn human_size(bytes: u64) -> String {
     const UNITS: [(u64, &str); 3] = [
@@ -261,11 +211,6 @@ pub fn human_size(bytes: u64) -> String {
     format!("{bytes} B")
 }
 
-/// Strips the HTML that Workshop titles and descriptions carry.
-///
-/// Steam stores what authors typed, which includes entities and the occasional
-/// tag. Decoding and stripping have to alternate: an entity can decode *into* a
-/// tag, so one pass of each in either order leaves visible markup behind.
 #[must_use]
 pub fn plain_text(raw: &str) -> String {
     let mut text = raw.to_owned();
@@ -298,8 +243,6 @@ mod tests {
 
     #[test]
     fn one_tag_per_axis_becomes_one_group_per_axis() {
-        // Flattening them would ask for all-or-any across axes, which is a
-        // different search that still returns a plausible page.
         let mut filters = Filters::new();
         if let Some(slot) = filters.chosen.get_mut(0) {
             *slot = Some("Scene".to_owned());
@@ -318,8 +261,6 @@ mod tests {
 
     #[test]
     fn a_trend_window_is_dropped_when_the_sort_is_not_trend() {
-        // tapline refuses the combination, and a sidebar that leaves the
-        // period set while switching sort would make the search fail.
         let filters = Filters {
             sort: BrowseSort::Vote,
             trend_days: Some(180),
@@ -353,8 +294,6 @@ mod tests {
 
     #[test]
     fn clearing_keeps_the_sort_and_the_adult_choice() {
-        // Both are preferences about how to browse, not part of a search, and
-        // resetting them on Clear is the kind of thing that gets sworn at.
         let mut filters = Filters {
             sort: BrowseSort::Recent,
             adult: true,
@@ -369,7 +308,6 @@ mod tests {
 
     #[test]
     fn markup_survives_neither_decoding_nor_stripping_alone() {
-        // &lt;b&gt; decodes into a tag, so decode-then-strip once leaves it.
         assert_eq!(plain_text("&lt;b&gt;Neon&lt;/b&gt; nights"), "Neon nights");
         assert_eq!(plain_text("<i>Rain</i>&nbsp;&amp;&nbsp;fog"), "Rain & fog");
     }

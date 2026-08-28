@@ -1,50 +1,19 @@
-//! What the app remembers between runs.
-//!
-//! Written to `$XDG_CONFIG_HOME/haru/config.json`, and every field has a
-//! working default: a config that fails to load is a config that gets replaced
-//! by defaults, never a reason to refuse to start.
-
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-/// Settings, as they sit on disk.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    /// Where installs land. `None` uses the first Steam library found, which
-    /// is what kirie and Wallpaper Engine already read.
     pub install_dir: Option<PathBuf>,
-    /// The renderer's control socket. `None` uses `$XDG_RUNTIME_DIR/lwe.sock`,
-    /// which is where kirie puts it.
     pub socket: Option<PathBuf>,
-    /// Whether adult content is shown without asking each time.
     pub adult: bool,
-    /// How many results a page of the browser holds.
     pub per_page: u32,
-    /// Extra Steam libraries to read, for a layout the probe does not know.
     pub extra_libraries: Vec<PathBuf>,
-    /// What was last put on each screen, by output name.
-    ///
-    /// The engine is told which screens to own and what to show on them when
-    /// it starts, and it is the only thing that knows what is up — so when it
-    /// is not running there is nobody to ask. This is that memory: a restart
-    /// puts back what was there rather than the same wallpaper everywhere.
     pub screens: BTreeMap<String, PathBuf>,
-    /// Which kirie build to fetch: `webkit` or `cef`. `None` until one is
-    /// chosen, which is also how a first run is recognised.
     pub renderer_web: Option<String>,
-    /// Whether to offer installing a renderer when none is found.
-    ///
-    /// On until someone turns the offer down. A picker that asks the same
-    /// question at every start is one nobody reads.
     pub offer_renderer: bool,
-    /// Whether the browser keeps loading as it is scrolled.
-    ///
-    /// Off by default: numbered pages are where you can say "back to page 4",
-    /// and an endless grid cannot. On, the page strip goes away and results
-    /// simply continue.
     pub infinite_scroll: bool,
 }
 
@@ -65,7 +34,6 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Where the file lives.
     #[must_use]
     pub fn path() -> Option<PathBuf> {
         let base = std::env::var_os("XDG_CONFIG_HOME")
@@ -74,11 +42,6 @@ impl Config {
         Some(base.join("haru/config.json"))
     }
 
-    /// Reads the config, or the defaults.
-    ///
-    /// A malformed file is replaced by defaults rather than reported: the
-    /// alternative is a picker that will not open because a number in a file
-    /// is a string.
     #[must_use]
     pub fn load() -> Self {
         Self::path()
@@ -87,13 +50,6 @@ impl Config {
             .unwrap_or_default()
     }
 
-    /// Writes the config.
-    ///
-    /// Through a temporary file and a rename, so an interrupted write leaves
-    /// the previous settings rather than half of the new ones.
-    ///
-    /// # Errors
-    /// When the directory cannot be made, or the file cannot be written.
     pub fn save(&self) -> Result<(), String> {
         let path = Self::path().ok_or("no config directory")?;
         let parent = path.parent().ok_or("no config directory")?;
@@ -105,11 +61,6 @@ impl Config {
         std::fs::rename(&staged, &path).map_err(|error| error.to_string())
     }
 
-    /// Where a download should land.
-    ///
-    /// The configured directory, or the first Steam library found — which is
-    /// where the Steam client, Wallpaper Engine and kirie already look, so an
-    /// item installed there is visible to all of them.
     #[must_use]
     pub fn install_root(&self) -> Option<PathBuf> {
         self.install_dir
@@ -117,7 +68,6 @@ impl Config {
             .or_else(|| self.libraries().into_iter().next())
     }
 
-    /// Every Steam library to read, the probe's and the ones named here.
     #[must_use]
     pub fn libraries(&self) -> Vec<PathBuf> {
         let mut roots = crate::library::steam_roots();
@@ -141,15 +91,11 @@ mod tests {
             None,
             "a broken file must not parse"
         );
-        // …and load() turns that into defaults, which is the behaviour that
-        // keeps the window opening.
         assert_eq!(Config::default().per_page, 24);
     }
 
     #[test]
     fn a_partial_config_keeps_the_defaults_for_what_it_omits() {
-        // Fields get added between versions, and an older file must not reset
-        // everything it has never heard of.
         let parsed: Config = serde_json::from_str(r#"{"adult":true}"#).unwrap_or_default();
         assert!(parsed.adult);
         assert_eq!(parsed.per_page, 24);

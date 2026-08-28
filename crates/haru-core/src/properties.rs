@@ -1,65 +1,31 @@
-//! The knobs a wallpaper exposes.
-//!
-//! A wallpaper's `project.json` carries a `general.properties` object: the
-//! sliders, switches, colours and dropdowns its author wanted people to have.
-//! Wallpaper Engine shows them in a panel beside the wallpaper, and a picker
-//! that cannot is only half of one — most of what makes a scene *yours* is in
-//! there.
-//!
-//! Reading them needs no renderer, so the panel works with nothing running;
-//! changing one needs a renderer, because it is the renderer that redraws.
-
 use std::path::Path;
 
-/// What kind of control a property wants.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Kind {
-    /// A switch.
     Bool(bool),
-    /// A number with a range.
     Slider {
-        /// Where it is now.
         value: f64,
-        /// The lowest it goes.
         min: f64,
-        /// The highest it goes.
         max: f64,
-        /// How far one notch moves it.
         step: f64,
     },
-    /// A colour, as the `r g b` triple the renderer speaks.
     Color([f32; 3]),
-    /// One of a fixed set.
     Combo {
-        /// The chosen value.
         value: String,
-        /// Every option, as label and value.
         options: Vec<(String, String)>,
     },
-    /// Free text, and anything unrecognised.
     Text(String),
 }
 
-/// One property, ready to draw.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Property {
-    /// The name the renderer knows it by.
     pub key: String,
-    /// What to call it in the panel.
     pub label: String,
-    /// What it is.
     pub kind: Kind,
-    /// Where the author wanted it in the list.
     pub order: i64,
 }
 
 impl Property {
-    /// Takes a value back in the form the socket sends it.
-    ///
-    /// The inverse of [`Property::wire`], for folding a saved change into a
-    /// freshly-read wallpaper. A value that does not parse leaves the property
-    /// alone: a saved setting from an older version of a wallpaper should not
-    /// break the panel it appears in.
     pub fn set_from_wire(&mut self, raw: &str) {
         match &mut self.kind {
             Kind::Bool(on) => *on = raw == "true" || raw == "1",
@@ -72,8 +38,6 @@ impl Property {
             }
             Kind::Color(rgb) => *rgb = triple(raw),
             Kind::Combo { value, options } => {
-                // Only a value the wallpaper still offers: an option removed by
-                // an update would otherwise show as a selection nothing matches.
                 if options.iter().any(|(_, option)| option == raw) {
                     *value = raw.to_owned();
                 }
@@ -82,10 +46,6 @@ impl Property {
         }
     }
 
-    /// The value as the control socket wants it.
-    ///
-    /// Colours are a space-separated triple, which is why they cannot be sent
-    /// as a bare string: the renderer parses three floats.
     #[must_use]
     pub fn wire(&self) -> String {
         match &self.kind {
@@ -98,10 +58,6 @@ impl Property {
     }
 }
 
-/// Reads the properties a wallpaper directory exposes, in the author's order.
-///
-/// A wallpaper with none — most videos — gives an empty list rather than an
-/// error, because having no settings is an ordinary state and not a failure.
 #[must_use]
 pub fn read(dir: &Path) -> Vec<Property> {
     let Ok(text) = std::fs::read_to_string(dir.join("project.json")) else {
@@ -130,7 +86,6 @@ pub fn read(dir: &Path) -> Vec<Property> {
     found
 }
 
-/// Reads one entry of the properties object.
 fn property(key: &str, raw: &serde_json::Value) -> Option<Property> {
     let object = raw.as_object()?;
     let declared = object
@@ -138,8 +93,6 @@ fn property(key: &str, raw: &serde_json::Value) -> Option<Property> {
         .and_then(serde_json::Value::as_str)
         .unwrap_or("");
 
-    // A `text` property is a heading the author put between controls, not a
-    // control. Drawing it as a text box is the tag-soup this used to be.
     if declared == "text" {
         return None;
     }
@@ -148,8 +101,6 @@ fn property(key: &str, raw: &serde_json::Value) -> Option<Property> {
     let kind = match declared {
         "bool" => Kind::Bool(match value {
             Some(serde_json::Value::Bool(on)) => *on,
-            // Authors write both `true` and `"true"`, and a string that is not
-            // "true" is off.
             Some(serde_json::Value::String(text)) => text == "true",
             _ => false,
         }),
@@ -203,7 +154,6 @@ fn property(key: &str, raw: &serde_json::Value) -> Option<Property> {
     })
 }
 
-/// A JSON scalar as the string the renderer would take.
 fn scalar_to_string(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::String(text) => text.clone(),
@@ -212,7 +162,6 @@ fn scalar_to_string(value: &serde_json::Value) -> String {
     }
 }
 
-/// A number, whether it arrived as one or as a string.
 fn number(value: Option<&serde_json::Value>) -> Option<f64> {
     match value? {
         serde_json::Value::Number(number) => number.as_f64(),
@@ -221,7 +170,6 @@ fn number(value: Option<&serde_json::Value>) -> Option<f64> {
     }
 }
 
-/// Reads an `r g b` triple, each channel 0..=1.
 fn triple(raw: &str) -> [f32; 3] {
     let mut channels = raw.split_whitespace().filter_map(|part| part.parse().ok());
     [
@@ -231,12 +179,6 @@ fn triple(raw: &str) -> [f32; 3] {
     ]
 }
 
-/// A label fit to put beside a control.
-///
-/// Two things authors leave in one: Wallpaper Engine's own localisation keys,
-/// which the editor resolves and a reader does not, and occasionally the whole
-/// contents of the property as its own label — one observed here is a 200-byte
-/// image URL, which pushes every control below it off the panel.
 fn readable(label: &str) -> String {
     let looks_like_a_key = label.starts_with("ui_")
         || (!label.contains(' ') && label.contains('_') && label.is_ascii());
@@ -247,14 +189,7 @@ fn readable(label: &str) -> String {
     }
 }
 
-/// Cuts a label down to something that fits beside a control.
-///
-/// Both paths go through here. A property whose *key* is the value — one
-/// observed wallpaper keys a property with a 200-byte image tag — arrives with
-/// no label at all, and prettifying it produced the same wall of text the
-/// label path was already protected from.
 fn clip(label: &str) -> String {
-    /// Past this a label is not a label.
     const LONGEST: usize = 48;
 
     if label.chars().count() <= LONGEST {
@@ -264,11 +199,6 @@ fn clip(label: &str) -> String {
     format!("{}…", clipped.trim_end())
 }
 
-/// A readable name for a property with no label of its own.
-///
-/// Wallpaper Engine's own localisation keys look like
-/// `ui_browse_properties_scheme_color`; showing that verbatim is worse than
-/// showing nothing.
 fn pretty(key: &str) -> String {
     let trimmed = key
         .strip_prefix("ui_browse_properties_")
@@ -330,8 +260,6 @@ mod tests {
 
     #[test]
     fn a_heading_is_not_a_control() {
-        // Authors put `text` entries between controls as section titles, and
-        // drawing them as editable fields is the tag soup this avoids.
         let dir =
             write(r#"{"general":{"properties":{"banner":{"type":"text","value":"Colours"}}}}"#);
         assert!(read(&dir).is_empty());
@@ -360,7 +288,6 @@ mod tests {
 
     #[test]
     fn a_saved_value_goes_back_into_the_property_it_came_from() {
-        // What folding a saved change into a freshly-read wallpaper needs.
         let mut slider = Property {
             key: "speed".to_owned(),
             label: "Speed".to_owned(),
@@ -375,20 +302,15 @@ mod tests {
         slider.set_from_wire("1.5");
         assert_eq!(slider.wire(), "1.5");
 
-        // Out of range is clamped rather than accepted: a wallpaper updated to
-        // a narrower range would otherwise be handed a value it cannot use.
         slider.set_from_wire("99");
         assert_eq!(slider.wire(), "2");
 
-        // Nonsense leaves it alone.
         slider.set_from_wire("fast");
         assert_eq!(slider.wire(), "2");
     }
 
     #[test]
     fn a_saved_option_the_wallpaper_no_longer_offers_is_ignored() {
-        // An update can remove an option, and a selection nothing matches
-        // shows as a blank dropdown.
         let mut combo = Property {
             key: "mode".to_owned(),
             label: "Mode".to_owned(),
@@ -427,16 +349,12 @@ mod tests {
 
     #[test]
     fn a_label_that_is_itself_a_key_is_read_the_same_way() {
-        // Authors put the localisation key in the label field as often as they
-        // leave it out, and the editor resolves it where a reader cannot.
         assert_eq!(readable("ui_browse_properties_brightness"), "Brightness");
         assert_eq!(readable("Cursor | 光标"), "Cursor | 光标");
     }
 
     #[test]
     fn a_key_that_is_really_the_value_is_clipped_too() {
-        // The label path was clipped and the key path was not, so a property
-        // keyed with a 200-byte image tag still filled the panel.
         let long = "img_src_http_example_invalid_".repeat(9);
         let shown = property(
             &long,
@@ -449,8 +367,6 @@ mod tests {
 
     #[test]
     fn a_label_that_is_really_the_value_is_clipped() {
-        // One observed wallpaper labels a property with a 200-byte image URL,
-        // which pushes every control under it off the panel.
         let long = "img src=http://example.invalid/".repeat(9);
         let shown = readable(&long);
         assert!(shown.chars().count() <= 49, "{shown}");

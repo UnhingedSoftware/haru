@@ -16,10 +16,6 @@ license = "MPL-2.0"
 repository = "https://github.com/UnhingedSoftware/haru"
 rust-version = "1.85"
 
-# The dependency floor, the same rule tapline holds itself to: adding a line
-# here is a deliberate act, and nothing arrives by being pulled in sideways.
-#
-# Deliberately absent: reqwest, any -sys crate outside what wgpu itself needs.
 [workspace.dependencies]
 haru-apply = { path = "crates/haru-apply" }
 haru-core = { path = "crates/haru-core" }
@@ -55,11 +51,8 @@ ureq = { version = "2", default-features = false, features = ["tls"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
-missing_docs = "warn"
 
 [workspace.lints.clippy]
-# haru is an application rather than a library in someone else's process, but
-# a picker that panics loses the window and whatever was being set up in it.
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
