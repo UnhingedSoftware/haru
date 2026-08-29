@@ -48,6 +48,9 @@ impl Offscreen {
         if let Some(assets) = engine_assets() {
             command.env("KIRIE_WE_ASSETS", assets);
         }
+        if let Some(libraries) = kirie_libraries() {
+            command.env("KIRIE_STEAM_LIBRARY", libraries);
+        }
 
         let child = command
             .stdout(std::process::Stdio::null())
@@ -122,6 +125,11 @@ fn find_kirie() -> PathBuf {
 
 fn engine_assets() -> Option<std::path::PathBuf> {
     haru_core::engine::found()
+}
+
+fn kirie_libraries() -> Option<std::ffi::OsString> {
+    let roots = haru_core::Config::load().libraries();
+    (!roots.is_empty()).then(|| std::env::join_paths(roots).ok())?
 }
 
 #[cfg(test)]

@@ -68,11 +68,18 @@ impl Config {
         self.install_dir
             .clone()
             .or_else(|| self.libraries().into_iter().next())
+            .or_else(crate::engine::library_home)
     }
 
     #[must_use]
     pub fn libraries(&self) -> Vec<PathBuf> {
         let mut roots = crate::library::steam_roots();
+        if let Some(own) = crate::engine::library_home()
+            && own.is_dir()
+            && !roots.contains(&own)
+        {
+            roots.push(own);
+        }
         for extra in &self.extra_libraries {
             if !roots.contains(extra) {
                 roots.push(extra.clone());

@@ -147,17 +147,15 @@ impl Settings {
             None => {
                 ui.label(
                     RichText::new(
-                        "Wallpaper Engine's shaders and textures are missing — most wallpapers need them.",
+                        "Wallpaper Engine's shaders and textures are missing — haru fetches them itself.",
                     )
                     .small()
                     .color(theme::MUTED),
                 );
                 ui.add_space(4.0);
                 if ui
-                    .button("Download engine assets (377 MB)")
-                    .on_hover_text(
-                        "Fetched from Steam with your own account; nothing is redistributed",
-                    )
+                    .button("Fetch engine assets (377 MB)")
+                    .on_hover_text("Downloaded with your own account; no Steam client needed")
                     .clicked()
                 {
                     actions.fetch_assets = true;
@@ -318,7 +316,7 @@ impl Settings {
         ui.add_space(4.0);
         ui.label(
             RichText::new(
-                "Blank installs into the Steam library, where kirie and Wallpaper Engine already look.",
+                "Blank installs into your Steam library if you have one, otherwise into haru's own folder.",
             )
             .small()
             .color(theme::MUTED),

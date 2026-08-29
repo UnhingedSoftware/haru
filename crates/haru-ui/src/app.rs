@@ -60,6 +60,7 @@ pub struct Haru {
     sign_out_request: Option<haru_workshop::RequestId>,
     assets_request: Option<haru_workshop::RequestId>,
     assets_note: String,
+    assets_tried: bool,
     asked_who: bool,
     sidebar: bool,
 }
@@ -142,6 +143,7 @@ impl Haru {
             sign_out_request: None,
             assets_request: None,
             assets_note: String::new(),
+            assets_tried: false,
         }
     }
 
@@ -231,6 +233,7 @@ impl Haru {
         }
         self.collect_account();
 
+        self.fetch_assets_if_missing();
         self.collect_assets();
 
         if self.who_request.is_some()
@@ -240,6 +243,22 @@ impl Haru {
         {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
         }
+    }
+
+    fn fetch_assets_if_missing(&mut self) {
+        if self.assets_tried
+            || self.assets_request.is_some()
+            || haru_core::engine::found().is_some()
+        {
+            return;
+        }
+        self.assets_tried = true;
+        let Some(into) = haru_core::engine::install_root() else {
+            self.assets_note = "no data directory to install into".to_owned();
+            return;
+        };
+        self.assets_note = "fetching Wallpaper Engine's assets…".to_owned();
+        self.assets_request = Some(self.workshop.send(Request::EngineAssets { into }));
     }
 
     fn collect_assets(&mut self) {
@@ -312,6 +331,7 @@ impl Haru {
             self.installer.offer();
         }
         if asked.fetch_assets && self.assets_request.is_none() {
+            self.assets_tried = true;
             match haru_core::engine::install_root() {
                 Some(into) => {
                     self.assets_note = "fetching Wallpaper Engine's assets…".to_owned();

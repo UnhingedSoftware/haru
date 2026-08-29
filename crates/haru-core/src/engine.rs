@@ -41,7 +41,17 @@ pub fn looks_complete(assets: &std::path::Path) -> bool {
 
 #[must_use]
 pub fn found() -> Option<PathBuf> {
-    steam_assets().or_else(|| assets_home().filter(|dir| looks_complete(dir)))
+    managed().or_else(steam_assets)
+}
+
+#[must_use]
+pub fn library_home() -> Option<PathBuf> {
+    data_home().map(|base| base.join("haru/library"))
+}
+
+#[must_use]
+pub fn managed() -> Option<PathBuf> {
+    assets_home().filter(|dir| looks_complete(dir))
 }
 
 #[cfg(test)]
@@ -57,6 +67,16 @@ mod tests {
         let _ = std::fs::create_dir_all(dir.join("materials"));
         assert!(looks_complete(&dir));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn haru_prefers_its_own_copy_over_a_steam_install() {
+        let Some(managed_dir) = assets_home() else {
+            return;
+        };
+        if looks_complete(&managed_dir) {
+            assert_eq!(found(), Some(managed_dir));
+        }
     }
 
     #[test]

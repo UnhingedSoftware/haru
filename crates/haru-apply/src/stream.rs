@@ -18,6 +18,18 @@ pub struct Frame {
     pub pixels: Vec<u8>,
 }
 
+fn kirie_env() -> Vec<(String, std::ffi::OsString)> {
+    let mut out = Vec::new();
+    if let Some(assets) = haru_core::engine::found() {
+        out.push(("KIRIE_WE_ASSETS".to_owned(), assets.into_os_string()));
+    }
+    let roots = haru_core::Config::load().libraries();
+    if let Ok(joined) = std::env::join_paths(roots) {
+        out.push(("KIRIE_STEAM_LIBRARY".to_owned(), joined));
+    }
+    out
+}
+
 pub struct Preview {
     child: Child,
     socket: PathBuf,
@@ -41,12 +53,7 @@ impl Preview {
             .arg(edge.to_string())
             .env_remove("WAYLAND_DISPLAY")
             .env_remove("DISPLAY")
-            .envs(
-                haru_core::engine::found()
-                    .map(|assets| ("KIRIE_WE_ASSETS".to_owned(), assets))
-                    .into_iter()
-                    .collect::<Vec<_>>(),
-            )
+            .envs(kirie_env())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
