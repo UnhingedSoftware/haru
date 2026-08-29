@@ -28,6 +28,8 @@ const SETTLE: f64 = 0.35;
 
 const LANDING: f64 = 300.0;
 
+const DETAIL: f32 = 312.0;
+
 enum Status {
     Idle,
     Searching,
@@ -44,6 +46,7 @@ pub struct Browser {
     awaiting: Option<RequestId>,
     status: Status,
     selected: Option<usize>,
+    selected_id: Option<u64>,
     install_root: Option<PathBuf>,
     client: bool,
     downloading: Option<(u64, u64, u64)>,
@@ -95,6 +98,7 @@ impl Browser {
             awaiting,
             status: Status::Searching,
             selected: None,
+            selected_id: None,
             install_root: None,
             client: false,
             downloading: None,
@@ -144,7 +148,7 @@ impl Browser {
         if let Some(index) = self.selected {
             egui::SidePanel::right("detail")
                 .resizable(false)
-                .exact_width(312.0)
+                .exact_width(DETAIL)
                 .frame(theme::panel_frame(theme::Side::Right))
                 .show(ctx, |ui| self.detail(ui, previews, index));
         }
@@ -164,7 +168,6 @@ impl Browser {
             self.awaiting = None;
             match reply {
                 Reply::Page(page) => {
-                    self.selected = None;
                     if self.infinite && self.filters.page > 1 {
                         if let Some(previous) = self.page.take() {
                             self.appended.extend(previous.items);
@@ -172,6 +175,8 @@ impl Browser {
                     } else {
                         self.appended.clear();
                     }
+                    self.selected = None;
+                    self.reselect(&page);
                     self.page = Some(*page);
                     self.status = Status::Idle;
                 }
@@ -222,6 +227,21 @@ impl Browser {
                 }
                 _ => {}
             }
+        }
+    }
+
+    fn reselect(&mut self, page: &BrowsePage) {
+        let Some(wanted) = self.selected_id else {
+            return;
+        };
+        let found = self
+            .appended
+            .iter()
+            .chain(page.items.iter())
+            .position(|item| item.item.id.get() == wanted);
+        self.selected = found;
+        if found.is_none() {
+            self.selected_id = None;
         }
     }
 
@@ -480,6 +500,7 @@ impl Browser {
                             );
                             if clicked {
                                 self.selected = Some(index);
+                                self.selected_id = Some(found.item.id.get());
                             }
                         }
                     });
@@ -657,8 +678,15 @@ impl Browser {
         }
 
         let (columns, tile_width) = tile::columns_for(ui.available_width(), TILE, 8.0);
-        let rows = tile::rows_for(ui.available_height(), tile_width, 10.0);
-        self.fit_page(ui, columns.saturating_mul(rows));
+
+        // The page is sized to the window, not to the grid: the detail pane
+        // takes width from the grid, and a page that shrank when a wallpaper
+        // was opened would search again and throw away the thing being looked
+        // at.
+        let whole = ui.available_width() + if self.selected.is_some() { DETAIL } else { 0.0 };
+        let (across, wide) = tile::columns_for(whole, TILE, 8.0);
+        let rows = tile::rows_for(ui.available_height(), wide, 10.0);
+        self.fit_page(ui, across.saturating_mul(rows));
 
         let hit_bottom = self.tiles(ui, previews, &items, columns, tile_width);
         if hit_bottom
