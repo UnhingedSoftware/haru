@@ -62,3 +62,8 @@ todo = "deny"
 [profile.release]
 lto = "thin"
 strip = true
+
+[profile.release-dbg]
+inherits = "release"
+strip = false
+debug = 1
