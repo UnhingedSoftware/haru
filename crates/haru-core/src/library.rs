@@ -14,21 +14,46 @@ pub struct Installed {
 }
 
 #[must_use]
-pub fn steam_roots() -> Vec<PathBuf> {
-    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
-        return Vec::new();
-    };
+pub fn home_relative_roots() -> &'static [&'static str] {
+    #[cfg(target_os = "macos")]
+    {
+        &["Library/Application Support/Steam"]
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        &[
+            ".local/share/Steam",
+            ".steam/steam",
+            ".var/app/com.valvesoftware.Steam/.local/share/Steam",
+            "snap/steam/common/.local/share/Steam",
+        ]
+    }
+}
 
-    let mut roots: Vec<PathBuf> = [
-        ".local/share/Steam",
-        ".steam/steam",
-        ".var/app/com.valvesoftware.Steam/.local/share/Steam",
-        "snap/steam/common/.local/share/Steam",
-    ]
-    .iter()
-    .map(|relative| home.join(relative))
-    .filter(|root| root.is_dir())
-    .collect();
+fn windows_roots() -> Vec<PathBuf> {
+    ["ProgramFiles(x86)", "ProgramFiles", "ProgramW6432"]
+        .iter()
+        .filter_map(std::env::var_os)
+        .map(|base| PathBuf::from(base).join("Steam"))
+        .collect()
+}
+
+#[must_use]
+pub fn steam_roots() -> Vec<PathBuf> {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from);
+
+    let mut roots: Vec<PathBuf> = home
+        .iter()
+        .flat_map(|home| {
+            home_relative_roots()
+                .iter()
+                .map(|relative| home.join(relative))
+        })
+        .chain(windows_roots())
+        .filter(|root| root.is_dir())
+        .collect();
 
     for index in 0..roots.len() {
         let Some(root) = roots.get(index).cloned() else {
@@ -147,6 +172,17 @@ fn directory_size(dir: &Path) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_steam_root_matches_where_this_os_keeps_it() {
+        let roots = home_relative_roots();
+        assert!(!roots.is_empty());
+        if cfg!(target_os = "macos") {
+            assert_eq!(roots, ["Library/Application Support/Steam"]);
+        } else {
+            assert!(roots.contains(&".local/share/Steam"));
+        }
+    }
 
     struct Scratch(PathBuf);
 
