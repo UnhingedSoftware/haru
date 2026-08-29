@@ -295,13 +295,14 @@ impl Haru {
         let mut names: Vec<String> = Vec::new();
         let mut showing: Vec<(String, std::path::PathBuf)> = Vec::new();
 
-        for found in self.engine.snapshot().screens {
+        let seen = self.engine.snapshot();
+        for found in seen.screens {
             names.push(found.name.clone());
             if let Some(current) = found.current {
                 showing.push((found.name, current));
             }
         }
-        for name in haru_apply::launch::connectors() {
+        for name in seen.connectors {
             if !names.contains(&name) {
                 names.push(name);
             }

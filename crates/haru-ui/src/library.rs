@@ -126,11 +126,11 @@ impl Library {
     }
 
     fn sync(&mut self, engine: &Engine) {
-        let live: Vec<Screen> = engine.snapshot().screens;
-        self.owned = live.iter().map(|screen| screen.name.clone()).collect();
+        let seen = engine.snapshot();
+        self.owned = seen.screens.iter().map(|screen| screen.name.clone()).collect();
 
-        self.screens = live;
-        for name in haru_apply::launch::connectors() {
+        self.screens = seen.screens;
+        for name in seen.connectors {
             if !self.screens.iter().any(|screen| screen.name == name) {
                 self.screens.push(Screen {
                     name,

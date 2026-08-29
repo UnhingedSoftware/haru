@@ -12,6 +12,7 @@ const POLL: Duration = Duration::from_millis(900);
 pub struct Snapshot {
     pub available: bool,
     pub screens: Vec<Screen>,
+    pub connectors: Vec<String>,
     pub pid: Option<u32>,
     pub binary: Option<PathBuf>,
     pub working: bool,
@@ -198,10 +199,12 @@ fn poll(engine: &Kirie, shared: &Arc<Mutex<Snapshot>>) {
     };
     let pid = launch::pid();
     let binary = install::installed();
+    let connectors = launch::connectors();
 
     if let Ok(mut snapshot) = shared.lock() {
         snapshot.available = available;
         snapshot.screens = screens;
+        snapshot.connectors = connectors;
         snapshot.pid = pid;
         snapshot.binary = binary;
     }
