@@ -378,6 +378,10 @@ fn worker(requests: &Receiver<(RequestId, Request)>, replies: &Sender<(RequestId
             reply = runtime.block_on(answer(&mut session, request, replies, id));
         }
 
+        if matches!(&reply, Reply::SignedIn(_) | Reply::NeedsAccount) {
+            session = None;
+        }
+
         if replies.send((id, reply)).is_err() {
             return;
         }
