@@ -11,6 +11,7 @@ const POLL: Duration = Duration::from_millis(200);
 const STOP: Duration = Duration::from_secs(8);
 
 #[must_use]
+#[cfg(target_os = "linux")]
 pub fn pid() -> Option<u32> {
     std::fs::read_dir("/proc")
         .ok()?
@@ -24,11 +25,33 @@ pub fn pid() -> Option<u32> {
         })
 }
 
+#[cfg(not(target_os = "linux"))]
+pub fn pid() -> Option<u32> {
+    let found = Command::new("pgrep")
+        .args(["-x", "kirie"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&found.stdout)
+        .lines()
+        .find_map(|line| line.trim().parse().ok())
+}
+
 #[must_use]
 pub fn running() -> bool {
     pid().is_some()
 }
 
+pub const DESKTOP: &str = "Desktop";
+
+#[cfg(not(target_os = "linux"))]
+#[must_use]
+pub fn connectors() -> Vec<String> {
+    vec![DESKTOP.to_owned()]
+}
+
+#[cfg(target_os = "linux")]
 #[must_use]
 pub fn connectors() -> Vec<String> {
     let Ok(entries) = std::fs::read_dir("/sys/class/drm") else {
@@ -92,14 +115,30 @@ pub fn start(binary: &Path, socket: &Path, plan: &[Plan]) -> Result<(), String> 
 
     let mut arguments = vec![format!("--control-socket={}", socket.display())];
     for screen in plan {
-        arguments.push(format!("--screen-root={}", screen.screen));
+        if cfg!(target_os = "linux") {
+            arguments.push(format!("--screen-root={}", screen.screen));
+        }
         if let Some(wallpaper) = screen.wallpaper.as_ref() {
             arguments.push(format!("--bg={}", wallpaper.display()));
         }
     }
 
     spawn_detached(binary, &arguments)?;
-    wait_for(socket)
+    if cfg!(target_os = "linux") {
+        return wait_for(socket);
+    }
+    wait_for_process()
+}
+
+fn wait_for_process() -> Result<(), String> {
+    let deadline = Instant::now() + READY;
+    while Instant::now() < deadline {
+        if running() {
+            return Ok(());
+        }
+        std::thread::sleep(POLL);
+    }
+    Err("the renderer did not come up".to_owned())
 }
 
 pub fn stop() -> Result<(), String> {

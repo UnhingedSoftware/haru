@@ -110,6 +110,10 @@ fn library_directories() -> Vec<PathBuf> {
 
 #[must_use]
 pub fn installed() -> Option<PathBuf> {
+    if let Some(set) = std::env::var_os("KIRIE_BINARY") {
+        let path = PathBuf::from(set);
+        return path.is_file().then_some(path);
+    }
     let mut places = Vec::new();
     if let Some(home) = std::env::var_os("HOME") {
         places.push(PathBuf::from(home).join(".local/bin/kirie"));

@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::launch::Plan;
-use crate::{Backend, Kirie, Screen, install, launch};
+use crate::{Backend, Screen, install, launch};
 
 const POLL: Duration = Duration::from_millis(900);
 
@@ -56,7 +56,11 @@ impl Engine {
 
         let spawned = std::thread::Builder::new()
             .name("haru-engine".to_owned())
-            .spawn(move || worker(&Kirie::new(socket), &queue, &held, &notes_out));
+            .spawn(move || {
+                let path = socket.clone().unwrap_or_else(crate::kirie::default_socket);
+                let backend = crate::for_this_platform(socket);
+                worker(backend.as_ref(), &path, &queue, &held, &notes_out);
+            });
         if spawned.is_err() {
             if let Ok(mut snapshot) = shared.lock() {
                 snapshot.binary = install::installed();
@@ -122,7 +126,8 @@ impl Engine {
 }
 
 fn worker(
-    engine: &Kirie,
+    engine: &dyn Backend,
+    socket: &Path,
     queue: &Receiver<Job>,
     shared: &Arc<Mutex<Snapshot>>,
     notes: &Sender<Result<String, String>>,
@@ -131,7 +136,7 @@ fn worker(
     loop {
         match queue.recv_timeout(POLL) {
             Ok(job) => {
-                let note = run(engine, job, shared);
+                let note = run(engine, socket, job, shared);
                 if notes.send(note).is_err() {
                     return;
                 }
@@ -146,7 +151,12 @@ fn worker(
     }
 }
 
-fn run(engine: &Kirie, job: Job, shared: &Arc<Mutex<Snapshot>>) -> Result<String, String> {
+fn run(
+    engine: &dyn Backend,
+    socket: &Path,
+    job: Job,
+    shared: &Arc<Mutex<Snapshot>>,
+) -> Result<String, String> {
     match job {
         Job::Apply {
             screen,
@@ -163,14 +173,14 @@ fn run(engine: &Kirie, job: Job, shared: &Arc<Mutex<Snapshot>>) -> Result<String
         Job::Property { screen, key, value } => engine
             .set_property(&screen, &key, &value)
             .map(|()| format!("{key} = {value}")),
-        Job::Start(plan) => start(engine, shared, &plan, false),
-        Job::Restart(plan) => start(engine, shared, &plan, true),
+        Job::Start(plan) => start(socket, shared, &plan, false),
+        Job::Restart(plan) => start(socket, shared, &plan, true),
         Job::Stop => launch::stop().map(|()| "the renderer is stopped".to_owned()),
     }
 }
 
 fn start(
-    engine: &Kirie,
+    socket: &Path,
     shared: &Arc<Mutex<Snapshot>>,
     plan: &[Plan],
     replacing: bool,
@@ -183,14 +193,14 @@ fn start(
         .ok_or("no renderer installed yet")?;
 
     let outcome = if replacing || launch::running() {
-        launch::restart(&binary, engine.socket(), plan)
+        launch::restart(&binary, socket, plan)
     } else {
-        launch::start(&binary, engine.socket(), plan)
+        launch::start(&binary, socket, plan)
     };
     outcome.map(|()| "the renderer is up".to_owned())
 }
 
-fn poll(engine: &Kirie, shared: &Arc<Mutex<Snapshot>>) {
+fn poll(engine: &dyn Backend, shared: &Arc<Mutex<Snapshot>>) {
     let available = engine.available();
     let screens = if available {
         engine.screens().unwrap_or_default()

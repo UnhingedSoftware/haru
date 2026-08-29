@@ -100,7 +100,7 @@ impl Backend for Kirie {
     }
 }
 
-fn default_socket() -> PathBuf {
+pub(crate) fn default_socket() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
