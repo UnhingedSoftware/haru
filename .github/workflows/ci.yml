@@ -12,27 +12,18 @@ jobs:
   # binary, test and example in the workspace, so this catches what a build
   # would; `cargo test` runs as the release gate instead.
   #
-  # haru depends on tapline by path, so both are checked out side by side —
-  # the same layout a developer has. A private tapline needs a token in
-  # TAPLINE_TOKEN; without one the checkout fails loudly rather than the build
-  # failing later with a confusing missing-crate error.
+  # haru depends on tapline by path; it rides along as a submodule pinned to
+  # the commit this revision builds against.
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          path: haru
-      - uses: actions/checkout@v4
-        with:
-          repository: UnhingedSoftware/tapline
-          token: ${{ secrets.TAPLINE_TOKEN || github.token }}
-          path: tapline
+          submodules: true
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: haru
 
       # What eframe/wgpu need to compile on Linux: the windowing and input
       # headers. No GPU is used here — nothing is run, only built.
@@ -45,6 +36,4 @@ jobs:
             libx11-dev libxcursor-dev libxi-dev libxrandr-dev
 
       - run: cargo fmt --all --check
-        working-directory: haru
       - run: cargo clippy --workspace --all-targets -- -D warnings
-        working-directory: haru

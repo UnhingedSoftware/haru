@@ -36,22 +36,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          path: haru
+          submodules: true
           # git-cliff reads the history to work out the version and the notes.
           fetch-depth: 0
-      # haru depends on tapline by path, so both are checked out side by side —
-      # the same layout a developer has. A private tapline needs a token in
-      # TAPLINE_TOKEN; without one this fails plainly rather than the build
-      # failing later with a confusing missing-crate error.
-      - uses: actions/checkout@v4
-        with:
-          repository: UnhingedSoftware/tapline
-          token: ${{ secrets.TAPLINE_TOKEN || github.token }}
-          path: tapline
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: haru
       - name: Install git-cliff
         uses: taiki-e/install-action@v2
         with:
@@ -67,7 +56,6 @@ jobs:
 
       - name: Compute version
         id: version
-        working-directory: haru
         run: |
           set -euo pipefail
           input="${{ inputs.version }}"
@@ -82,7 +70,6 @@ jobs:
           echo "Release version: $version"
 
       - name: Generate changelog
-        working-directory: haru
         run: |
           set -euo pipefail
           git cliff --unreleased --tag "${{ steps.version.outputs.version }}" --strip all -o RELEASE_NOTES.md
@@ -91,23 +78,20 @@ jobs:
 
       # The gate: nothing ships from a tree with failing tests.
       - run: cargo test --workspace
-        working-directory: haru
 
       - name: Set crate version
-        working-directory: haru
         run: |
           v="${{ steps.version.outputs.version }}"; v="${v#v}"
           sed -i -E "0,/^version = \"[0-9]+\.[0-9]+\.[0-9]+\"/s//version = \"$v\"/" Cargo.toml
 
       - run: cargo build --release -p haru
-        working-directory: haru
 
       - name: Name the artifacts
         run: |
           set -euo pipefail
-          cp haru/target/release/haru haru-linux-x86_64
+          cp target/release/haru haru-linux-x86_64
           chmod +x haru-linux-x86_64
-          tar -czf haru-desktop-linux.tar.gz -C haru packaging
+          tar -czf haru-desktop-linux.tar.gz packaging
           ls -la haru-linux-x86_64 haru-desktop-linux.tar.gz
 
       - name: Create or update the draft
@@ -116,7 +100,6 @@ jobs:
         run: |
           set -euo pipefail
           files="haru-linux-x86_64 haru-desktop-linux.tar.gz"
-          cp haru/RELEASE_NOTES.md .
           cat >> RELEASE_NOTES.md <<'EOF'
 
           ## Downloads
