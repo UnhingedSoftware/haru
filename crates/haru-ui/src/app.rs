@@ -250,7 +250,7 @@ impl Haru {
     }
 
     fn workshop_tab(&mut self, ctx: &egui::Context) {
-        self.browser.ui(ctx, &mut self.previews, self.sidebar);
+        self.browser.ui(ctx, &mut self.previews, self.sidebar, &self.engine);
         if let Some(dir) = self.browser.take_landed() {
             self.library.refresh(&self.config, &self.engine);
             self.library.apply_to_target(&dir, &self.engine);

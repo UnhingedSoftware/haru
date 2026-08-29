@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use egui::{Align, Layout, RichText, Rounding, Sense, Stroke, Vec2};
 use haru_apply::{Engine, Screen};
-use haru_core::{Config, Installed, human_size, library, overrides, properties};
+use haru_core::{Config, Installed, human_size, library, overrides};
 use haru_media::Previews;
 use haru_workshop::{Reply, Request, Workshop};
 
@@ -48,8 +48,7 @@ pub struct Library {
     screens: Vec<Screen>,
     status: String,
     confirming: Option<String>,
-    settings: Vec<properties::Property>,
-    settings_for: Option<PathBuf>,
+    settings: crate::props::Panel,
     workshop: std::rc::Rc<Workshop>,
     unsubscribing: Option<haru_workshop::RequestId>,
     owned: Vec<String>,
@@ -87,8 +86,7 @@ impl Library {
             applied: None,
             pending: None,
             confirming: None,
-            settings: Vec::new(),
-            settings_for: None,
+            settings: crate::props::Panel::default(),
             workshop,
             unsubscribing: None,
         }
@@ -425,97 +423,26 @@ impl Library {
         self.status = what.into();
     }
 
-    fn properties_of(
-        &mut self,
-        ui: &mut egui::Ui,
-        item: &Installed,
-        engine: &Engine,
-    ) {
+    fn properties_of(&mut self, ui: &mut egui::Ui, item: &Installed, engine: &Engine) {
         let live = self
             .screens
             .iter()
             .any(|screen| screen.current.as_ref() == Some(&item.dir));
 
-        self.load_settings(item);
-
-        ui.label(RichText::new("Settings").small().color(theme::MUTED));
-        ui.add_space(2.0);
-
-        if self.settings.is_empty() {
-            ui.label(
-                RichText::new("This wallpaper has no settings.")
-                    .small()
-                    .color(theme::MUTED),
-            );
-            return;
-        }
-
-        if !live {
-            ui.label(
-                RichText::new("Apply it to change these.")
-                    .small()
-                    .color(theme::MUTED),
-            );
-            ui.add_space(4.0);
-        }
-
-        let screen = self.target.clone();
-        let mut changed: Option<(String, String)> = None;
-        let mut reset = false;
-
-        ui.add_enabled_ui(live, |ui| {
-            for property in &mut self.settings {
-                if crate::widgets::property(ui, property) {
-                    changed = Some((property.key.clone(), property.wire()));
-                }
-                ui.add_space(6.0);
+        match self.settings.show(ui, &item.id, &item.dir, live) {
+            crate::props::Outcome::Changed(key, value) => {
+                self.status = match self.target.as_deref() {
+                    Some(screen) => {
+                        engine.property(screen, &key, &value);
+                        format!("{key} = {value}")
+                    }
+                    None => "no screen to change it on".to_owned(),
+                };
             }
-            ui.add_space(4.0);
-            reset = ui.button("Reset to defaults").clicked();
-        });
-
-        if reset {
-            self.status = match overrides::clear(&item.id) {
-                Ok(()) => {
-                    self.settings = properties::read(&item.dir);
-                    "settings reset".to_owned()
-                }
-                Err(why) => why,
-            };
-            return;
+            crate::props::Outcome::Reset => self.status = "settings reset".to_owned(),
+            crate::props::Outcome::Failed(why) => self.status = why,
+            crate::props::Outcome::Nothing => {}
         }
-
-        let Some((key, value)) = changed else { return };
-
-        if let Err(why) = overrides::set(&item.id, &key, &value) {
-            self.status = why;
-            return;
-        }
-
-        self.status = match screen {
-            Some(screen) => {
-                engine.property(&screen, &key, &value);
-                format!("{key} = {value}")
-            }
-            None => "no screen to change it on".to_owned(),
-        };
-    }
-
-    fn load_settings(&mut self, item: &Installed) {
-        if self.settings_for.as_deref() == Some(item.dir.as_path()) {
-            return;
-        }
-
-        let mut read = properties::read(&item.dir);
-        let saved = overrides::read(&item.id);
-        for property in &mut read {
-            if let Some(value) = saved.get(&property.key) {
-                property.set_from_wire(value);
-            }
-        }
-
-        self.settings = read;
-        self.settings_for = Some(item.dir.clone());
     }
 
     fn apply(&mut self, screen: &str, dir: &std::path::Path, engine: &Engine) {

@@ -3,6 +3,7 @@ mod app;
 mod icons;
 mod library;
 mod preview;
+mod props;
 mod renderer;
 mod settings;
 pub mod theme;
@@ -19,7 +20,8 @@ use egui::{Align, Layout, RichText, Sense};
 use haru_core::{Filters, TAG_GROUPS, TREND_PERIODS, human_size, plain_text};
 use haru_media::Previews;
 use haru_workshop::{Reply, Request, RequestId, Workshop};
-use std::path::PathBuf;
+use haru_apply::Engine;
+use std::path::{Path, PathBuf};
 use tapline::{BrowsePage, BrowseResult, BrowseSort, TextTarget};
 
 const TILE: f32 = 168.0;
@@ -55,6 +57,7 @@ pub struct Browser {
     landed: Option<PathBuf>,
     fit: bool,
     settling: Option<(u32, f64)>,
+    settings: crate::props::Panel,
     subscribing: Option<u64>,
     landing: Option<(u64, PathBuf, f64)>,
     needs_account: bool,
@@ -107,6 +110,7 @@ impl Browser {
             landed: None,
             fit: true,
             settling: None,
+            settings: crate::props::Panel::default(),
             subscribing: None,
             landing: None,
             needs_account: false,
@@ -129,7 +133,13 @@ impl Browser {
         self.client = client;
     }
 
-    pub fn ui(&mut self, ctx: &egui::Context, previews: &mut Previews, sidebar: bool) {
+    pub fn ui(
+        &mut self,
+        ctx: &egui::Context,
+        previews: &mut Previews,
+        sidebar: bool,
+        engine: &haru_apply::Engine,
+    ) {
         self.collect();
         self.check_files(ctx);
 
@@ -150,7 +160,7 @@ impl Browser {
                 .resizable(false)
                 .exact_width(DETAIL)
                 .frame(theme::panel_frame(theme::Side::Right))
-                .show(ctx, |ui| self.detail(ui, previews, index));
+                .show(ctx, |ui| self.detail(ui, previews, index, engine));
         }
 
         egui::TopBottomPanel::bottom("paging")
@@ -227,6 +237,38 @@ impl Browser {
                 }
                 _ => {}
             }
+        }
+    }
+
+    fn item_dir(&self, id: u64) -> Option<PathBuf> {
+        self.install_root
+            .as_ref()
+            .map(|root| root.join(format!("steamapps/workshop/content/431960/{id}")))
+            .filter(|dir| dir.join("project.json").is_file())
+    }
+
+    fn settings_for(&mut self, ui: &mut egui::Ui, id: &str, dir: &Path, engine: &Engine) {
+        let live = engine
+            .snapshot()
+            .screens
+            .iter()
+            .any(|screen| screen.current.as_deref() == Some(dir));
+        let on = engine
+            .snapshot()
+            .screens
+            .iter()
+            .find(|screen| screen.current.as_deref() == Some(dir))
+            .map(|screen| screen.name.clone());
+
+        match self.settings.show(ui, id, dir, live) {
+            crate::props::Outcome::Changed(key, value) => {
+                if let Some(screen) = on {
+                    engine.property(&screen, &key, &value);
+                }
+                self.status = Status::Idle;
+            }
+            crate::props::Outcome::Failed(why) => self.status = Status::Failed(why),
+            crate::props::Outcome::Reset | crate::props::Outcome::Nothing => {}
         }
     }
 
@@ -382,7 +424,7 @@ impl Browser {
         }
     }
 
-    fn download_row(&mut self, ui: &mut egui::Ui, found: &BrowseResult) {
+    fn download_row(&mut self, ui: &mut egui::Ui, found: &BrowseResult, engine: &Engine) {
         let id = found.item.id.get();
         let on_disk = self.installed.contains(&id)
             || self.install_root.as_ref().is_some_and(|root| {
@@ -442,6 +484,10 @@ impl Browser {
             }
             None if on_disk => {
                 ui.label(RichText::new("Already installed").color(theme::ACCENT));
+                if let Some(dir) = self.item_dir(id) {
+                    ui.add_space(10.0);
+                    self.settings_for(ui, &id.to_string(), &dir, engine);
+                }
             }
             None => {
                 if ui
@@ -737,7 +783,13 @@ impl Browser {
         self.run();
     }
 
-    fn detail(&mut self, ui: &mut egui::Ui, previews: &mut Previews, index: usize) {
+    fn detail(
+        &mut self,
+        ui: &mut egui::Ui,
+        previews: &mut Previews,
+        index: usize,
+        engine: &haru_apply::Engine,
+    ) {
         let Some(found) = self
             .appended
             .iter()
@@ -786,7 +838,7 @@ impl Browser {
 
                 ui.add_space(10.0);
 
-                self.download_row(ui, &found);
+                self.download_row(ui, &found, engine);
 
                 ui.add_space(10.0);
                 ui.label(RichText::new(human_size(found.item.size)).strong());
