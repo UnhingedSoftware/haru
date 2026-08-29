@@ -54,6 +54,7 @@ pub struct Library {
     owned: Vec<String>,
     applied: Option<(String, PathBuf)>,
     pending: Option<(String, PathBuf)>,
+    previewing: Option<Installed>,
 }
 
 impl Library {
@@ -85,6 +86,7 @@ impl Library {
             owned: Vec::new(),
             applied: None,
             pending: None,
+            previewing: None,
             confirming: None,
             settings: crate::props::Panel::default(),
             workshop,
@@ -277,6 +279,41 @@ impl Library {
                                     apply = Some((target, item.dir.clone()));
                                 }
                             }
+                            response.context_menu(|ui| {
+                                ui.set_min_width(180.0);
+                                if ui.button("Preview").clicked() {
+                                    self.previewing = Some(item.clone());
+                                    ui.close_menu();
+                                }
+                                if ui.button("Details").clicked() {
+                                    self.selected = Some(*index);
+                                    ui.close_menu();
+                                }
+
+                                ui.separator();
+                                for screen in &self.screens {
+                                    let here = screen.current.as_deref() == Some(&item.dir);
+                                    let label = if here {
+                                        format!("On {}", screen.name)
+                                    } else {
+                                        format!("Put up on {}", screen.name)
+                                    };
+                                    if ui.add_enabled(!here, egui::Button::new(label)).clicked() {
+                                        apply = Some((screen.name.clone(), item.dir.clone()));
+                                        ui.close_menu();
+                                    }
+                                }
+
+                                ui.separator();
+                                if ui
+                                    .button(RichText::new("Unsubscribe").color(theme::DANGER))
+                                    .clicked()
+                                {
+                                    self.selected = Some(*index);
+                                    self.confirming = Some(item.id.clone());
+                                    ui.close_menu();
+                                }
+                            });
                         }
                     });
                     ui.add_space(10.0);
@@ -350,6 +387,15 @@ impl Library {
                 ui.label(RichText::new(&item.id).small().color(theme::MUTED));
 
                 ui.add_space(12.0);
+
+                if ui
+                    .add_sized([ui.available_width(), 32.0], egui::Button::new("Preview"))
+                    .on_hover_text("Render it off-screen, nothing on your screens moves")
+                    .clicked()
+                {
+                    self.previewing = Some(item.clone());
+                }
+                ui.add_space(6.0);
 
                 if self.confirming.as_deref() == Some(item.id.as_str()) {
                     ui.label(
@@ -432,6 +478,10 @@ impl Library {
 
     pub fn take_pending(&mut self) -> Option<(String, PathBuf)> {
         self.pending.take()
+    }
+
+    pub fn take_preview(&mut self) -> Option<Installed> {
+        self.previewing.take()
     }
 
     pub fn say(&mut self, what: impl Into<String>) {

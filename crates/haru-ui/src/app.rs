@@ -164,6 +164,10 @@ impl Haru {
             Tab::Settings => self.settings_tab(ctx),
         }
 
+        if let Some(item) = self.library.take_preview() {
+            self.preview.open(item);
+            self.tab = Tab::Preview;
+        }
         if let Some((screen, dir)) = self.library.take_pending() {
             self.start_renderer(&screen, &dir);
         }
