@@ -58,6 +58,8 @@ pub struct Haru {
     who_request: Option<haru_workshop::RequestId>,
     sign_in_request: Option<haru_workshop::RequestId>,
     sign_out_request: Option<haru_workshop::RequestId>,
+    assets_request: Option<haru_workshop::RequestId>,
+    assets_note: String,
     asked_who: bool,
     sidebar: bool,
 }
@@ -138,6 +140,8 @@ impl Haru {
             who_request: None,
             sign_in_request: None,
             sign_out_request: None,
+            assets_request: None,
+            assets_note: String::new(),
         }
     }
 
@@ -227,12 +231,41 @@ impl Haru {
         }
         self.collect_account();
 
+        self.collect_assets();
+
         if self.who_request.is_some()
             || self.sign_in_request.is_some()
             || self.sign_out_request.is_some()
+            || self.assets_request.is_some()
         {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
         }
+    }
+
+    fn collect_assets(&mut self) {
+        let Some(id) = self.assets_request else {
+            return;
+        };
+        let Some(reply) = self.workshop.take(id) else {
+            return;
+        };
+        match reply {
+            haru_workshop::Reply::Progress { done, total, .. } => {
+                let share = done.saturating_mul(100).checked_div(total).unwrap_or(0);
+                self.assets_note = format!("fetching Wallpaper Engine's assets… {share}%");
+                return;
+            }
+            haru_workshop::Reply::EngineAssets { dir } => {
+                self.assets_note = format!("engine assets ready: {}", dir.display());
+            }
+            haru_workshop::Reply::NeedsAccount => {
+                self.assets_note = "sign in with an account that owns Wallpaper Engine".to_owned();
+                self.account.open();
+            }
+            haru_workshop::Reply::Failed(why) => self.assets_note = why,
+            _ => return,
+        }
+        self.assets_request = None;
     }
 
     fn overlays(&mut self, ctx: &egui::Context) {
@@ -270,12 +303,22 @@ impl Haru {
             &self.engine,
             self.account.who(),
             self.account.has_client(),
+            &self.assets_note,
         );
         if asked.sign_in {
             self.account.open();
         }
         if asked.install {
             self.installer.offer();
+        }
+        if asked.fetch_assets && self.assets_request.is_none() {
+            match haru_core::engine::install_root() {
+                Some(into) => {
+                    self.assets_note = "fetching Wallpaper Engine's assets…".to_owned();
+                    self.assets_request = Some(self.workshop.send(Request::EngineAssets { into }));
+                }
+                None => self.assets_note = "no data directory to install into".to_owned(),
+            }
         }
         if let Some(what) = asked.renderer {
             self.manage_renderer(what);

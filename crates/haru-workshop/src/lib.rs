@@ -24,6 +24,9 @@ pub enum Request {
         item: Box<WorkshopItem>,
         into: PathBuf,
     },
+    EngineAssets {
+        into: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +41,7 @@ pub enum Reply {
     Subscribed,
     Unsubscribed,
     Installed { id: u64, dir: PathBuf },
+    EngineAssets { dir: PathBuf },
     NeedsAccount,
     Failed(String),
 }
@@ -210,6 +214,51 @@ async fn install(
     }
 }
 
+async fn engine_assets(
+    session: &mut Session,
+    into: &std::path::Path,
+    replies: &Sender<(RequestId, Reply)>,
+    id: RequestId,
+) -> Reply {
+    let app = tapline_ids::AppId(haru_core::engine::WALLPAPER_ENGINE_APP);
+    let options = tapline::InstallOptions {
+        install_dir: into.to_owned(),
+        ..tapline::InstallOptions::default()
+    };
+
+    let outbound = replies.clone();
+    let mut last_sent = 0_u64;
+    let mut observe = move |event: tapline::Event| {
+        if let tapline::Event::Progress {
+            bytes_done,
+            bytes_total,
+        } = event
+        {
+            let step = bytes_total.max(1) / 200;
+            if bytes_done.saturating_sub(last_sent) < step && bytes_done < bytes_total {
+                return;
+            }
+            last_sent = bytes_done;
+            let _ = outbound.send((
+                id,
+                Reply::Progress {
+                    id: u64::from(haru_core::engine::WALLPAPER_ENGINE_APP),
+                    done: bytes_done,
+                    total: bytes_total,
+                },
+            ));
+        }
+    };
+
+    match session.install_observed(app, &options, &mut observe).await {
+        Ok(_) => Reply::EngineAssets {
+            dir: into.join("assets"),
+        },
+        Err(error) if error.needs_login() => Reply::NeedsAccount,
+        Err(error) => Reply::Failed(error.to_string()),
+    }
+}
+
 async fn answer(
     session: &mut Option<Session>,
     request: Request,
@@ -275,6 +324,7 @@ async fn serve(
             Err(error) => Reply::Failed(error.to_string()),
         },
         Request::Install { item, into } => install(session, &item, &into, replies, id).await,
+        Request::EngineAssets { into } => engine_assets(session, &into, replies, id).await,
         Request::WhoAmI | Request::SignOut => {
             Reply::Failed("handled before the session".to_owned())
         }

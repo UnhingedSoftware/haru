@@ -1033,6 +1033,7 @@ dependencies = [
 name = "haru-apply"
 version = "0.1.0"
 dependencies = [
+ "haru-core",
  "serde_json",
  "sha2",
  "ureq",
@@ -1077,6 +1078,7 @@ dependencies = [
 name = "haru-workshop"
 version = "0.1.0"
 dependencies = [
+ "haru-core",
  "tapline",
  "tapline-auth",
  "tapline-ids",

@@ -17,11 +17,13 @@ pub struct Actions {
     pub sign_in: bool,
     pub sign_out: bool,
     pub install: bool,
+    pub fetch_assets: bool,
     pub renderer: Option<Renderer>,
 }
 
 #[derive(Default)]
 pub struct Settings {
+    assets_note: String,
     socket: String,
     install: String,
     library: String,
@@ -49,7 +51,9 @@ impl Settings {
         engine: &Engine,
         signed_in: Option<&str>,
         client: bool,
+        assets_note: &str,
     ) -> Actions {
+        self.assets_note = assets_note.to_owned();
         let mut actions = Actions::default();
 
         egui::CentralPanel::default()
@@ -127,6 +131,42 @@ impl Settings {
         ui.add_space(18.0);
     }
 
+    fn engine_assets(ui: &mut egui::Ui, actions: &mut Actions, note: String) {
+        if !note.is_empty() {
+            ui.label(RichText::new(note).small().color(theme::MUTED));
+            ui.add_space(4.0);
+        }
+        match haru_core::engine::found() {
+            Some(dir) => {
+                ui.label(
+                    RichText::new(format!("engine assets: {}", dir.display()))
+                        .small()
+                        .color(theme::MUTED),
+                );
+            }
+            None => {
+                ui.label(
+                    RichText::new(
+                        "Wallpaper Engine's shaders and textures are missing — most wallpapers need them.",
+                    )
+                    .small()
+                    .color(theme::MUTED),
+                );
+                ui.add_space(4.0);
+                if ui
+                    .button("Download engine assets (377 MB)")
+                    .on_hover_text(
+                        "Fetched from Steam with your own account; nothing is redistributed",
+                    )
+                    .clicked()
+                {
+                    actions.fetch_assets = true;
+                }
+            }
+        }
+        ui.add_space(8.0);
+    }
+
     fn renderer(
         &mut self,
         ui: &mut egui::Ui,
@@ -136,6 +176,7 @@ impl Settings {
     ) {
         ui.label(RichText::new("Renderer").strong());
         ui.add_space(4.0);
+        Self::engine_assets(ui, actions, self.assets_note.clone());
 
         match (engine.available, engine.pid) {
             (true, _) => Self::running(ui, engine, actions),

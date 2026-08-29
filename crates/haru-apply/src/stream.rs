@@ -41,6 +41,12 @@ impl Preview {
             .arg(edge.to_string())
             .env_remove("WAYLAND_DISPLAY")
             .env_remove("DISPLAY")
+            .envs(
+                haru_core::engine::found()
+                    .map(|assets| ("KIRIE_WE_ASSETS".to_owned(), assets))
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+            )
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()

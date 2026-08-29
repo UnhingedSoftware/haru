@@ -8,6 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+haru-core = { workspace = true }
 tapline = { workspace = true }
 tapline-auth = { workspace = true }
 tapline-ids = { workspace = true }
