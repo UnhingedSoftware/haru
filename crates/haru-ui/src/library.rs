@@ -117,17 +117,18 @@ impl Library {
     pub fn refresh(&mut self, config: &Config, engine: &Engine) {
         self.items = library::scan(&config.libraries());
         self.sync(engine);
-        if self
-            .selected
-            .is_some_and(|index| index >= self.items.len())
-        {
+        if self.selected.is_some_and(|index| index >= self.items.len()) {
             self.selected = None;
         }
     }
 
     fn sync(&mut self, engine: &Engine) {
         let seen = engine.snapshot();
-        self.owned = seen.screens.iter().map(|screen| screen.name.clone()).collect();
+        self.owned = seen
+            .screens
+            .iter()
+            .map(|screen| screen.name.clone())
+            .collect();
 
         self.screens = seen.screens;
         for name in seen.connectors {
