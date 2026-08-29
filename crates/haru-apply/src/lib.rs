@@ -35,6 +35,21 @@ pub trait Backend: Send + Sync {
 }
 
 #[must_use]
+pub fn renderer_env() -> Vec<(&'static str, std::ffi::OsString)> {
+    let mut set: Vec<(&'static str, std::ffi::OsString)> = Vec::new();
+    if let Some(assets) = haru_core::engine::found() {
+        set.push(("KIRIE_WE_ASSETS", assets.into_os_string()));
+    }
+    let roots = haru_core::Config::load().libraries();
+    if let Ok(joined) = std::env::join_paths(roots)
+        && !joined.is_empty()
+    {
+        set.push(("KIRIE_STEAM_LIBRARY", joined));
+    }
+    set
+}
+
+#[must_use]
 pub fn for_this_platform(socket: Option<PathBuf>) -> Box<dyn Backend> {
     if cfg!(target_os = "linux") {
         return Box::new(Kirie::new(socket));

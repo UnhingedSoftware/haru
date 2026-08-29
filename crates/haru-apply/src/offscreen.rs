@@ -45,11 +45,8 @@ impl Offscreen {
 
         command.env_remove("WAYLAND_DISPLAY");
         command.env_remove("DISPLAY");
-        if let Some(assets) = engine_assets() {
-            command.env("KIRIE_WE_ASSETS", assets);
-        }
-        if let Some(libraries) = kirie_libraries() {
-            command.env("KIRIE_STEAM_LIBRARY", libraries);
+        for (key, value) in crate::renderer_env() {
+            command.env(key, value);
         }
 
         let child = command
@@ -121,15 +118,6 @@ fn find_kirie() -> PathBuf {
         }
     }
     PathBuf::from("kirie")
-}
-
-fn engine_assets() -> Option<std::path::PathBuf> {
-    haru_core::engine::found()
-}
-
-fn kirie_libraries() -> Option<std::ffi::OsString> {
-    let roots = haru_core::Config::load().libraries();
-    (!roots.is_empty()).then(|| std::env::join_paths(roots).ok())?
 }
 
 #[cfg(test)]

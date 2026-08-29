@@ -193,6 +193,9 @@ fn spawn_detached(binary: &Path, arguments: &[String]) -> Result<(), String> {
         None => Command::new(binary),
     };
     command.args(arguments);
+    for (key, value) in crate::renderer_env() {
+        command.env(key, value);
+    }
 
     command.stdin(Stdio::null());
     match std::fs::File::create(log()).and_then(|file| Ok((file.try_clone()?, file))) {
