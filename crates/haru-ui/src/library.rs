@@ -116,6 +116,16 @@ impl Library {
 
     pub fn refresh(&mut self, config: &Config, engine: &Engine) {
         self.items = library::scan(&config.libraries());
+        self.sync(engine);
+        if self
+            .selected
+            .is_some_and(|index| index >= self.items.len())
+        {
+            self.selected = None;
+        }
+    }
+
+    fn sync(&mut self, engine: &Engine) {
         let live: Vec<Screen> = engine.snapshot().screens;
         self.owned = live.iter().map(|screen| screen.name.clone()).collect();
 
@@ -128,10 +138,13 @@ impl Library {
                 });
             }
         }
-        if self.target.is_none() {
+        if self
+            .target
+            .as_deref()
+            .is_none_or(|name| !self.screens.iter().any(|screen| screen.name == name))
+        {
             self.target = self.screens.first().map(|screen| screen.name.clone());
         }
-        self.selected = None;
     }
 
     pub fn ui(
@@ -143,6 +156,7 @@ impl Library {
         sidebar: bool,
     ) {
         self.collect();
+        self.sync(engine);
         if self.unsubscribing.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
         }

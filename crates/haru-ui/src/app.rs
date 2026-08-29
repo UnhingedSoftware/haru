@@ -381,7 +381,6 @@ impl Haru {
                 Ok(said) => self.library.say(said),
                 Err(why) => self.library.say(why),
             }
-            self.scanned = false;
         }
         if self.engine.snapshot().working {
             ctx.request_repaint_after(std::time::Duration::from_millis(200));
