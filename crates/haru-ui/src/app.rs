@@ -61,6 +61,7 @@ pub struct Haru {
     assets_request: Option<haru_workshop::RequestId>,
     assets_note: String,
     assets_tried: bool,
+    assets_wait_account: bool,
     asked_who: bool,
     sidebar: bool,
 }
@@ -144,6 +145,7 @@ impl Haru {
             assets_request: None,
             assets_note: String::new(),
             assets_tried: false,
+            assets_wait_account: false,
         }
     }
 
@@ -246,6 +248,10 @@ impl Haru {
     }
 
     fn fetch_assets_if_missing(&mut self) {
+        if self.assets_wait_account && self.account.who().is_some() {
+            self.assets_wait_account = false;
+            self.assets_tried = false;
+        }
         if self.assets_tried
             || self.assets_request.is_some()
             || haru_core::engine::found().is_some()
@@ -279,6 +285,7 @@ impl Haru {
             }
             haru_workshop::Reply::NeedsAccount => {
                 self.assets_note = "sign in with an account that owns Wallpaper Engine".to_owned();
+                self.assets_wait_account = true;
                 self.account.open();
             }
             haru_workshop::Reply::Failed(why) => self.assets_note = why,
