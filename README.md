@@ -12,6 +12,15 @@ haru --search miku      # browse, already searching
 haru --item 884307090   # preview one, and edit its settings
 ```
 
+| | |
+|:-:|:-:|
+| [![Library](docs/shots/library.jpg)](docs/shots/library.jpg)<br>**Library** — what is installed, and what is on each screen | [![Workshop](docs/shots/workshop.jpg)](docs/shots/workshop.jpg)<br>**Workshop** — 3.1M items, Steam's own filters, no Steam client |
+
+[![Preview](docs/shots/preview.jpg)](docs/shots/preview.jpg)
+
+**Preview** — the wallpaper rendered off-screen with its own properties beside
+it, editable live. Nothing on your screens moves.
+
 ## What it does
 
 - **Workshop** — search 3.1M items with Steam's own filters: tag groups, sort
