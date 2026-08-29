@@ -78,6 +78,11 @@ fn main() -> ExitCode {
 
     let options = eframe::NativeOptions {
         viewport,
+        wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
+            present_mode: eframe::wgpu::PresentMode::AutoNoVsync,
+            desired_maximum_frame_latency: Some(2),
+            ..eframe::egui_wgpu::WgpuConfiguration::default()
+        },
         ..eframe::NativeOptions::default()
     };
 
