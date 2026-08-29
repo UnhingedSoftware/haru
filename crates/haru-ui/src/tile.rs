@@ -5,6 +5,8 @@ use tapline::BrowseResult;
 
 const CAPTION: f32 = 40.0;
 
+const FILL: f32 = 0.65;
+
 pub fn columns_for(available: f32, min_tile: f32, spacing: f32) -> (usize, f32) {
     const MAX_TILE: f32 = 260.0;
 
@@ -20,7 +22,7 @@ pub fn rows_for(available: f32, tile_width: f32, spacing: f32) -> usize {
     if row <= 0.0 {
         return 1;
     }
-    let rows = ((available + spacing) / row).floor();
+    let rows = ((available + spacing) / row + 1.0 - FILL).floor();
     if rows.is_finite() && rows >= 1.0 {
         rows as usize
     } else {
@@ -146,7 +148,15 @@ mod tests {
         let row = 200.0 + 40.0 + 10.0;
         let three = row * 3.0 - 10.0;
         assert_eq!(rows_for(three, 200.0, 10.0), 3);
-        assert_eq!(rows_for(three - 1.0, 200.0, 10.0), 2);
+        assert_eq!(rows_for(three - 1.0, 200.0, 10.0), 3);
+    }
+
+    #[test]
+    fn a_row_that_is_mostly_visible_is_asked_for() {
+        let two = 2.0 * 250.0 - 10.0;
+        assert_eq!(rows_for(two, 200.0, 10.0), 2);
+        assert_eq!(rows_for(two + 170.0, 200.0, 10.0), 3);
+        assert_eq!(rows_for(two + 40.0, 200.0, 10.0), 2);
     }
 
     #[test]
