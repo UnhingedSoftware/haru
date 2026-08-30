@@ -105,10 +105,21 @@ impl Backend for Kirie {
         let reply = self.ask(&format!("bg {screen} {}", dir.display()))?;
         match reply.first().map(|line| line.trim()) {
             Some("ok") => Ok(()),
-            Some("error") => Err("the renderer would not load it".to_owned()),
+            Some(said) if said.starts_with("error") => Err(why(said)),
             Some(other) => Err(format!("unexpected answer: {other}")),
             None => Err("the renderer stopped answering".to_owned()),
         }
+    }
+}
+
+// kirie answers `error <reason>`; the engine it stands in for answers a bare
+// `error`, so a missing reason is not a fault.
+fn why(said: &str) -> String {
+    let reason = said.strip_prefix("error").unwrap_or(said).trim();
+    if reason.is_empty() {
+        "the renderer would not load it".to_owned()
+    } else {
+        reason.to_owned()
     }
 }
 
@@ -121,6 +132,19 @@ pub(crate) fn default_socket() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_reason_is_shown_when_the_renderer_gives_one() {
+        assert_eq!(
+            super::why("error Wallpaper Engine's base assets are missing"),
+            "Wallpaper Engine's base assets are missing"
+        );
+    }
+
+    #[test]
+    fn a_bare_refusal_still_reads_as_one() {
+        assert_eq!(super::why("error"), "the renderer would not load it");
+    }
+
     use super::*;
 
     #[test]
