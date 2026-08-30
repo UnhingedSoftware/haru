@@ -5,6 +5,7 @@ use crate::{Backend, Screen};
 
 pub struct Relaunch {
     socket: PathBuf,
+    live: crate::Kirie,
     showing: std::sync::Mutex<Option<PathBuf>>,
 }
 
@@ -12,6 +13,7 @@ impl Relaunch {
     #[must_use]
     pub fn new(socket: PathBuf) -> Self {
         Self {
+            live: crate::Kirie::new(Some(socket.clone())),
             socket,
             showing: std::sync::Mutex::new(None),
         }
@@ -20,40 +22,12 @@ impl Relaunch {
     fn binary(&self) -> Result<PathBuf, String> {
         crate::install::installed().ok_or_else(|| "no renderer installed yet".to_owned())
     }
-}
 
-impl Backend for Relaunch {
-    fn name(&self) -> &'static str {
-        "kirie"
+    fn speaking(&self) -> Option<&crate::Kirie> {
+        self.live.available().then_some(&self.live)
     }
 
-    fn available(&self) -> bool {
-        self.binary().is_ok()
-    }
-
-    fn screens(&self) -> Result<Vec<Screen>, String> {
-        let current = self
-            .showing
-            .lock()
-            .ok()
-            .and_then(|showing| showing.clone())
-            .filter(|_| launch::running());
-        Ok(vec![Screen {
-            name: DESKTOP.to_owned(),
-            current,
-        }])
-    }
-
-    fn apply(&self, _screen: &str, dir: &Path) -> Result<(), String> {
-        let plan = [Plan::showing(DESKTOP, dir)];
-        launch::restart(&self.binary()?, &self.socket, &plan)?;
-        if let Ok(mut showing) = self.showing.lock() {
-            *showing = Some(dir.to_path_buf());
-        }
-        Ok(())
-    }
-
-    fn tune(&self, _commands: &[String]) -> Result<(), String> {
+    fn put_up_again(&self) -> Result<(), String> {
         let showing = self
             .showing
             .lock()
@@ -72,15 +46,68 @@ impl Backend for Relaunch {
             &[Plan::showing(DESKTOP, &dir)],
         )
     }
+}
 
-    fn set_property(&self, _screen: &str, _key: &str, _value: &str) -> Result<(), String> {
-        Err("changing a property while it runs needs the control socket, which this platform does not have yet".to_owned())
+impl Backend for Relaunch {
+    fn name(&self) -> &'static str {
+        "kirie"
     }
 
-    fn stage(&self, _key: &str, _value: &str) -> Result<(), String> {
-        Err(
-            "staged properties need the control socket, which this platform does not have yet"
-                .to_owned(),
-        )
+    fn available(&self) -> bool {
+        self.binary().is_ok()
+    }
+
+    fn screens(&self) -> Result<Vec<Screen>, String> {
+        if let Some(live) = self.speaking()
+            && let Ok(screens) = live.screens()
+            && !screens.is_empty()
+        {
+            return Ok(screens);
+        }
+        let current = self
+            .showing
+            .lock()
+            .ok()
+            .and_then(|showing| showing.clone())
+            .filter(|_| launch::running());
+        Ok(vec![Screen {
+            name: DESKTOP.to_owned(),
+            current,
+        }])
+    }
+
+    fn apply(&self, screen: &str, dir: &Path) -> Result<(), String> {
+        match self.speaking() {
+            Some(live) => live.apply(screen, dir)?,
+            None => {
+                let plan = [Plan::showing(DESKTOP, dir)];
+                launch::restart(&self.binary()?, &self.socket, &plan)?;
+            }
+        }
+        if let Ok(mut showing) = self.showing.lock() {
+            *showing = Some(dir.to_path_buf());
+        }
+        Ok(())
+    }
+
+    fn tune(&self, commands: &[String]) -> Result<(), String> {
+        match self.speaking() {
+            Some(live) => live.tune(commands),
+            None => self.put_up_again(),
+        }
+    }
+
+    fn set_property(&self, screen: &str, key: &str, value: &str) -> Result<(), String> {
+        match self.speaking() {
+            Some(live) => live.set_property(screen, key, value),
+            None => Err("the renderer is not running, so there is nothing to change".to_owned()),
+        }
+    }
+
+    fn stage(&self, key: &str, value: &str) -> Result<(), String> {
+        match self.speaking() {
+            Some(live) => live.stage(key, value),
+            None => Ok(()),
+        }
     }
 }
