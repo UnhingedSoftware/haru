@@ -29,15 +29,22 @@ pub fn pid() -> Option<u32> {
 
 #[cfg(not(target_os = "linux"))]
 pub fn pid() -> Option<u32> {
-    let found = Command::new("pgrep")
-        .args(["-x", "kirie"])
+    let listed = Command::new("ps")
+        .args(["-Ao", "pid=,comm="])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .output()
         .ok()?;
-    String::from_utf8_lossy(&found.stdout)
-        .lines()
-        .find_map(|line| line.trim().parse().ok())
+    first_kirie(&String::from_utf8_lossy(&listed.stdout))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn first_kirie(listing: &str) -> Option<u32> {
+    listing.lines().find_map(|line| {
+        let (pid, command) = line.trim_start().split_once(char::is_whitespace)?;
+        let name = command.trim().rsplit('/').next()?;
+        (name == "kirie").then(|| pid.parse().ok())?
+    })
 }
 
 #[must_use]
@@ -341,5 +348,27 @@ mod tests {
             &[Plan::showing("DP-1", "/tmp")],
         );
         assert_eq!(refused, Err("no renderer at /nonexistent/kirie".to_owned()));
+    }
+}
+
+#[cfg(all(test, not(target_os = "linux")))]
+mod tests {
+    use super::first_kirie;
+
+    #[test]
+    fn the_renderer_is_found_by_its_own_name() {
+        let listing = "  501 /usr/sbin/cfprefsd\n  733 /Users/me/.local/bin/kirie\n";
+        assert_eq!(first_kirie(listing), Some(733));
+    }
+
+    #[test]
+    fn something_merely_mentioning_it_is_not_the_renderer() {
+        let listing = "  90 /Applications/kirie-helper\n  91 /usr/bin/haru\n";
+        assert_eq!(first_kirie(listing), None);
+    }
+
+    #[test]
+    fn an_empty_table_finds_nothing() {
+        assert_eq!(first_kirie(""), None);
     }
 }

@@ -236,7 +236,8 @@ impl Settings {
             (false, None) => {
                 ui.label(
                     RichText::new(
-                        "No renderer found. Wallpapers can still be browsed and installed.",
+                        "No renderer found. Wallpapers can still be browsed and installed. \
+                         If one is running anyway, `pkill -x kirie` stops it.",
                     )
                     .color(theme::MUTED),
                 );
