@@ -203,19 +203,34 @@ impl Library {
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui, config: &Config, engine: &Engine) {
-        ui.heading("Library");
+        ui.add_space(2.0);
+        ui.horizontal(|ui| {
+            theme::heading(ui, "Library");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add(egui::Button::new(
+                        RichText::new("Rescan").size(11.0).color(theme::MUTED),
+                    ))
+                    .on_hover_text("Look for wallpapers again")
+                    .clicked()
+                {
+                    self.refresh(config, engine);
+                    self.status = "rescanned".to_owned();
+                }
+            });
+        });
         ui.label(
             RichText::new(if self.screens.is_empty() {
                 "No renderer found"
             } else {
                 "Click a wallpaper to put it up"
             })
-            .small()
+            .size(11.0)
             .color(theme::MUTED),
         );
         ui.add_space(10.0);
 
-        ui.label(RichText::new("Filter").small().color(theme::MUTED));
+        ui.label(RichText::new("Filter").size(11.0).color(theme::MUTED));
         ui.add(
             egui::TextEdit::singleline(&mut self.filter)
                 .hint_text("Title or type")
@@ -223,7 +238,7 @@ impl Library {
         );
 
         ui.add_space(8.0);
-        ui.label(RichText::new("Order").small().color(theme::MUTED));
+        ui.label(RichText::new("Order").size(11.0).color(theme::MUTED));
         egui::ComboBox::from_id_salt("library-order")
             .selected_text(self.order.label())
             .width(200.0)
@@ -232,12 +247,6 @@ impl Library {
                     ui.selectable_value(&mut self.order, order, order.label());
                 }
             });
-
-        ui.add_space(10.0);
-        if ui.button("Rescan").clicked() {
-            self.refresh(config, engine);
-            self.status = "rescanned".to_owned();
-        }
     }
 
     fn grid(&mut self, ui: &mut egui::Ui, previews: &mut Previews, engine: &Engine) {

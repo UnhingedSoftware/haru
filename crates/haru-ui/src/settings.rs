@@ -192,7 +192,7 @@ impl Settings {
         client: bool,
         actions: &mut Actions,
     ) {
-        ui.label(RichText::new("Steam").strong());
+        theme::heading(ui, "Steam");
         ui.add_space(4.0);
         match (signed_in, client) {
             (Some(who), _) => {
@@ -324,7 +324,7 @@ impl Settings {
         engine: &Snapshot,
         actions: &mut Actions,
     ) {
-        ui.label(RichText::new("Renderer").strong());
+        theme::heading(ui, "Renderer");
         ui.add_space(4.0);
         Self::engine_assets(ui, actions, self.assets_note.clone());
         ui.add_space(6.0);
@@ -473,7 +473,7 @@ impl Settings {
         use haru_core::renderer::{Clamp, Scaling};
 
         let before = config.renderer;
-        ui.label(RichText::new("Wallpaper").strong());
+        theme::heading(ui, "Wallpaper");
         ui.add_space(2.0);
         ui.label(
             RichText::new("Applies to every wallpaper, whatever it asks for itself.")
@@ -607,7 +607,7 @@ impl Settings {
     }
 
     fn installing(&mut self, ui: &mut egui::Ui, config: &mut Config, actions: &mut Actions) {
-        ui.label(RichText::new("Installing").strong());
+        theme::heading(ui, "Installing");
         ui.add_space(4.0);
         ui.label(
             RichText::new(
@@ -632,7 +632,7 @@ impl Settings {
     }
 
     fn libraries(&mut self, ui: &mut egui::Ui, config: &mut Config, actions: &mut Actions) {
-        ui.label(RichText::new("Steam libraries").strong());
+        theme::heading(ui, "Steam libraries");
         ui.add_space(4.0);
         for root in config.libraries() {
             let extra = config.extra_libraries.contains(&root);
@@ -668,7 +668,7 @@ impl Settings {
     }
 
     fn browsing(ui: &mut egui::Ui, config: &mut Config, actions: &mut Actions) {
-        ui.label(RichText::new("Browsing").strong());
+        theme::heading(ui, "Browsing");
         ui.add_space(4.0);
         actions.changed |= ui
             .checkbox(&mut config.adult, "Show adult content")
@@ -712,7 +712,7 @@ impl Settings {
         engine: &Engine,
         actions: &mut Actions,
     ) {
-        ui.label(RichText::new("Versions and files").strong());
+        theme::heading(ui, "Versions and files");
         ui.add_space(6.0);
 
         if !self.update_note.is_empty() {
@@ -803,7 +803,14 @@ impl Settings {
         ui.separator();
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            if ui.button("Save").clicked() {
+            if ui
+                .add(
+                    egui::Button::new(RichText::new("Save").size(12.5).color(egui::Color32::WHITE))
+                        .fill(theme::ACCENT)
+                        .min_size(egui::vec2(110.0, 30.0)),
+                )
+                .clicked()
+            {
                 self.status = match config.save() {
                     Ok(()) => "saved".to_owned(),
                     Err(why) => why,
