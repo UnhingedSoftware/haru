@@ -79,12 +79,16 @@ impl Backend for Relaunch {
     }
 
     fn apply(&self, screen: &str, dir: &Path) -> Result<(), String> {
-        match self.speaking() {
-            Some(live) => live.apply(screen, dir)?,
-            None => {
-                let plan = [Plan::showing(DESKTOP, dir)];
-                launch::restart(&self.binary()?, &self.socket, &plan)?;
-            }
+        // The socket refuses what the render loop cannot swap in — a web
+        // wallpaper is a webview in the window, not a scene. Relaunching with it
+        // works, so treat a refusal as "start it again with this one".
+        let swapped = match self.speaking() {
+            Some(live) => live.apply(screen, dir).is_ok(),
+            None => false,
+        };
+        if !swapped {
+            let plan = [Plan::showing(DESKTOP, dir)];
+            launch::restart(&self.binary()?, &self.socket, &plan)?;
         }
         if let Ok(mut showing) = self.showing.lock() {
             *showing = Some(dir.to_path_buf());
