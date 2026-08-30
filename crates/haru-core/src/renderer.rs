@@ -3,9 +3,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Scaling {
-    #[default]
     Default,
     Fit,
+    #[default]
     Fill,
     Stretch,
 }
@@ -82,13 +82,15 @@ pub struct Renderer {
     pub no_automute: bool,
     pub no_audio_processing: bool,
     pub no_fullscreen_pause: bool,
+    pub focus_x: f32,
+    pub focus_y: f32,
 }
 
 impl Default for Renderer {
     fn default() -> Self {
         Self {
-            fps: 0,
-            battery_fps: 0,
+            fps: 30,
+            battery_fps: 30,
             render_scale: 1.0,
             playback_speed: 1.0,
             volume: 100,
@@ -101,6 +103,8 @@ impl Default for Renderer {
             no_automute: false,
             no_audio_processing: false,
             no_fullscreen_pause: false,
+            focus_x: 0.0,
+            focus_y: 0.0,
         }
     }
 }
@@ -125,6 +129,9 @@ impl Renderer {
         }
         if self.scaling != Scaling::Default {
             out.push(format!("--scaling={}", self.scaling.flag()));
+        }
+        if self.focus_x != 0.0 || self.focus_y != 0.0 {
+            out.push(format!("--focus={},{}", self.focus_x, self.focus_y));
         }
         if self.clamp != Clamp::default() {
             out.push(format!("--clamp={}", self.clamp.flag()));
@@ -162,7 +169,9 @@ impl Renderer {
 
     #[must_use]
     pub fn needs_relaunch(&self, next: &Self) -> bool {
-        self.scaling != next.scaling
+        self.focus_x != next.focus_x
+            || self.focus_y != next.focus_y
+            || self.scaling != next.scaling
             || self.clamp != next.clamp
             || self.disable_particles != next.disable_particles
             || self.no_audio_processing != next.no_audio_processing
@@ -174,17 +183,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_ask_the_renderer_for_nothing() {
-        assert!(Renderer::default().arguments().is_empty());
+    fn the_default_fills_the_screen_at_thirty_frames() {
+        let renderer = Renderer::default();
+        assert_eq!(renderer.scaling, Scaling::Fill);
+        assert_eq!(renderer.fps, 30);
+        assert_eq!(renderer.battery_fps, 30);
+        assert!(renderer.arguments().contains(&"--scaling=fill".to_owned()));
+        assert!(renderer.arguments().contains(&"--fps=30".to_owned()));
     }
 
     #[test]
-    fn a_capped_frame_rate_reaches_the_command_line() {
+    fn a_focus_only_travels_when_it_is_off_centre() {
+        let mut renderer = Renderer::default();
+        assert!(
+            !renderer
+                .arguments()
+                .iter()
+                .any(|arg| arg.starts_with("--focus"))
+        );
+        renderer.focus_x = -0.4;
+        assert!(renderer.arguments().contains(&"--focus=-0.4,0".to_owned()));
+    }
+
+    #[test]
+    fn an_uncapped_frame_rate_asks_for_nothing() {
         let renderer = Renderer {
-            fps: 30,
+            fps: 0,
             ..Renderer::default()
         };
-        assert_eq!(renderer.arguments(), vec!["--fps=30".to_owned()]);
+        assert!(
+            !renderer
+                .arguments()
+                .iter()
+                .any(|arg| arg.starts_with("--fps"))
+        );
     }
 
     #[test]
@@ -194,7 +226,7 @@ mod tests {
             mute: true,
             ..Renderer::default()
         };
-        assert_eq!(renderer.arguments(), vec!["--silent".to_owned()]);
+        assert!(renderer.arguments().contains(&"--silent".to_owned()));
     }
 
     #[test]
@@ -204,10 +236,8 @@ mod tests {
             clamp: Clamp::Repeat,
             ..Renderer::default()
         };
-        assert_eq!(
-            renderer.arguments(),
-            vec!["--scaling=fill".to_owned(), "--clamp=repeat".to_owned()]
-        );
+        assert!(renderer.arguments().contains(&"--scaling=fill".to_owned()));
+        assert!(renderer.arguments().contains(&"--clamp=repeat".to_owned()));
     }
 
     #[test]
@@ -239,6 +269,8 @@ mod tests {
             no_automute: true,
             no_audio_processing: true,
             no_fullscreen_pause: true,
+            focus_x: -0.25,
+            focus_y: 0.5,
         };
         let text = serde_json::to_string(&renderer).unwrap_or_default();
         let back: Renderer = serde_json::from_str(&text).unwrap_or_default();

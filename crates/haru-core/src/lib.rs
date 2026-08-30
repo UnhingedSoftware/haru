@@ -116,7 +116,7 @@ pub const TREND_PERIODS: &[(&str, u32)] = &[
 pub struct Filters {
     pub text: String,
     pub search_in: TextTarget,
-    pub chosen: Vec<Option<String>>,
+    pub chosen: Vec<Vec<String>>,
     pub sort: BrowseSort,
     pub trend_days: Option<u32>,
     pub updated_since: Option<u32>,
@@ -129,7 +129,7 @@ impl Filters {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            chosen: vec![None; TAG_GROUPS.len()],
+            chosen: vec![Vec::new(); TAG_GROUPS.len()],
             per_page: 24,
             page: 1,
             ..Self::default()
@@ -139,7 +139,7 @@ impl Filters {
     #[must_use]
     pub fn is_narrowed(&self) -> bool {
         !self.text.is_empty()
-            || self.chosen.iter().any(Option::is_some)
+            || self.chosen.iter().any(|group| !group.is_empty())
             || self.updated_since.is_some()
     }
 
@@ -171,8 +171,8 @@ impl Filters {
             tag_groups: self
                 .chosen
                 .iter()
-                .filter_map(|chosen| chosen.clone())
-                .map(|tag| vec![tag])
+                .filter(|group| !group.is_empty())
+                .cloned()
                 .collect(),
             excluded_descriptors: if self.adult {
                 Vec::new()
@@ -247,10 +247,10 @@ mod tests {
     fn one_tag_per_axis_becomes_one_group_per_axis() {
         let mut filters = Filters::new();
         if let Some(slot) = filters.chosen.get_mut(0) {
-            *slot = Some("Scene".to_owned());
+            *slot = vec!["Scene".to_owned()];
         }
         if let Some(slot) = filters.chosen.get_mut(2) {
-            *slot = Some("Anime".to_owned());
+            *slot = vec!["Anime".to_owned()];
         }
 
         let query = filters.to_query();
@@ -259,6 +259,27 @@ mod tests {
             vec![vec!["Scene".to_owned()], vec!["Anime".to_owned()]]
         );
         assert!(query.required_tags.is_empty());
+    }
+
+    #[test]
+    fn several_tags_on_one_axis_stay_one_group() {
+        let mut filters = Filters::new();
+        if let Some(slot) = filters.chosen.get_mut(2) {
+            *slot = vec!["Anime".to_owned(), "Game".to_owned()];
+        }
+
+        let query = filters.to_query();
+        assert_eq!(
+            query.tag_groups,
+            vec![vec!["Anime".to_owned(), "Game".to_owned()]]
+        );
+    }
+
+    #[test]
+    fn an_empty_axis_asks_for_nothing() {
+        let filters = Filters::new();
+        assert!(filters.to_query().tag_groups.is_empty());
+        assert!(!filters.is_narrowed());
     }
 
     #[test]

@@ -26,6 +26,14 @@ use tapline::{BrowsePage, BrowseResult, BrowseSort, TextTarget};
 
 const TILE: f32 = 168.0;
 
+fn summary(label: &str, picked: &[String]) -> String {
+    match picked.len() {
+        0 => format!("Any {label}"),
+        1 => picked.first().cloned().unwrap_or_default(),
+        many => format!("{label}: {many} chosen"),
+    }
+}
+
 const SETTLE: f64 = 0.35;
 
 const LANDING: f64 = 300.0;
@@ -671,31 +679,29 @@ impl Browser {
                     let Some(chosen) = self.filters.chosen.get(index) else {
                         continue;
                     };
-                    let selected = chosen.clone();
-                    egui::ComboBox::from_id_salt(group.label)
-                        .selected_text(selected.clone().unwrap_or_else(|| group.label.to_owned()))
-                        .width(200.0)
-                        .show_ui(ui, |ui| {
-                            if ui
-                                .selectable_label(
-                                    selected.is_none(),
-                                    format!("Any {}", group.label),
-                                )
-                                .clicked()
-                                && let Some(slot) = self.filters.chosen.get_mut(index)
-                            {
-                                *slot = None;
-                                changed = true;
-                            }
+                    let picked = chosen.clone();
+                    egui::CollapsingHeader::new(summary(group.label, &picked))
+                        .id_salt(group.label)
+                        .show(ui, |ui| {
                             for tag in group.tags {
-                                if ui
-                                    .selectable_label(selected.as_deref() == Some(*tag), *tag)
-                                    .clicked()
+                                let mut on = picked.iter().any(|held| held == tag);
+                                if ui.checkbox(&mut on, *tag).changed()
                                     && let Some(slot) = self.filters.chosen.get_mut(index)
                                 {
-                                    *slot = Some((*tag).to_owned());
+                                    if on {
+                                        slot.push((*tag).to_owned());
+                                    } else {
+                                        slot.retain(|held| held != tag);
+                                    }
                                     changed = true;
                                 }
+                            }
+                            if !picked.is_empty()
+                                && ui.button(format!("Any {}", group.label)).clicked()
+                                && let Some(slot) = self.filters.chosen.get_mut(index)
+                            {
+                                slot.clear();
+                                changed = true;
                             }
                         });
                     ui.add_space(4.0);
@@ -703,7 +709,6 @@ impl Browser {
             });
         changed
     }
-
     fn grid(&mut self, ui: &mut egui::Ui, previews: &mut Previews) {
         if self.page.is_none() {
             self.waiting_or_error(ui);

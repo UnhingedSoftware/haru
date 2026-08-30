@@ -4,6 +4,14 @@ use haru_core::Config;
 
 use crate::theme;
 
+fn side(value: f64, low: &str, high: &str) -> String {
+    if value.abs() < 0.001 {
+        return "centre".to_owned();
+    }
+    let towards = if value < 0.0 { low } else { high };
+    format!("{:.0}% {towards}", value.abs() * 100.0)
+}
+
 fn frames(value: f64) -> String {
     if value <= 0.0 {
         "unlimited".to_owned()
@@ -359,6 +367,31 @@ impl Settings {
                     }
                 });
         });
+
+        if config.renderer.scaling == Scaling::Fill {
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new("Fill crops the overflow — move the crop to keep what matters.")
+                    .weak()
+                    .size(11.0),
+            );
+            ui.horizontal(|ui| {
+                ui.label("Focus across");
+                ui.add(
+                    egui::Slider::new(&mut config.renderer.focus_x, -1.0..=1.0)
+                        .step_by(0.05)
+                        .custom_formatter(|value, _| side(value, "left", "right")),
+                );
+            });
+            ui.horizontal(|ui| {
+                ui.label("Focus down");
+                ui.add(
+                    egui::Slider::new(&mut config.renderer.focus_y, -1.0..=1.0)
+                        .step_by(0.05)
+                        .custom_formatter(|value, _| side(value, "top", "bottom")),
+                );
+            });
+        }
 
         ui.add_space(10.0);
         ui.horizontal(|ui| {
