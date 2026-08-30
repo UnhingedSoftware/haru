@@ -77,6 +77,7 @@ pub struct Renderer {
     pub scaling: Scaling,
     pub clamp: Clamp,
     pub disable_mouse: bool,
+    pub interactive: bool,
     pub disable_parallax: bool,
     pub disable_particles: bool,
     pub no_automute: bool,
@@ -98,6 +99,7 @@ impl Default for Renderer {
             scaling: Scaling::default(),
             clamp: Clamp::default(),
             disable_mouse: false,
+            interactive: false,
             disable_parallax: false,
             disable_particles: false,
             no_automute: false,
@@ -140,6 +142,7 @@ impl Renderer {
             out.push(format!("--clamp={}", self.clamp.flag()));
         }
         for (on, flag) in [
+            (self.interactive, "--interactive"),
             (self.disable_mouse, "--disable-mouse"),
             (self.disable_parallax, "--disable-parallax"),
             (self.disable_particles, "--disable-particles"),
@@ -172,7 +175,8 @@ impl Renderer {
 
     #[must_use]
     pub fn needs_relaunch(&self, next: &Self) -> bool {
-        self.focus_x != next.focus_x
+        self.interactive != next.interactive
+            || self.focus_x != next.focus_x
             || self.focus_y != next.focus_y
             || self.scaling != next.scaling
             || self.clamp != next.clamp
@@ -272,6 +276,7 @@ mod tests {
             scaling: Scaling::Stretch,
             clamp: Clamp::Border,
             disable_mouse: true,
+            interactive: true,
             disable_parallax: true,
             disable_particles: true,
             no_automute: true,

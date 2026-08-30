@@ -495,6 +495,14 @@ impl Settings {
         ui.checkbox(&mut config.renderer.disable_parallax, "No parallax")
             .on_hover_text("Stops the scene leaning towards the pointer.");
         ui.checkbox(&mut config.renderer.disable_mouse, "Ignore the pointer");
+        ui.checkbox(
+            &mut config.renderer.interactive,
+            "Let wallpapers take clicks",
+        )
+        .on_hover_text(
+            "Interactive wallpapers become clickable. Clicks on the empty desktop go to the \
+             wallpaper instead of the desktop itself.",
+        );
         ui.checkbox(&mut config.renderer.disable_particles, "No particles");
         ui.checkbox(
             &mut config.renderer.no_automute,
