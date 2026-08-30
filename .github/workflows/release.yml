@@ -110,11 +110,13 @@ jobs:
           | --- | --- |
           | `haru-linux-x86_64` | the picker — `chmod +x`, run |
           | `haru-desktop-linux.tar.gz` | desktop entry and icons: `tar xf`, then `packaging/install.sh ./haru-linux-x86_64` |
-          | `haru-macos-aarch64` | Apple Silicon build |
-          | `haru-macos-aarch64.app.zip` | the same, as an app bundle: unzip into `~/Applications` |
+          | `haru-macos-aarch64.dmg` | macOS — open it and drag haru into Applications |
+          | `haru-macos-aarch64` | the same app as a bare binary, for a terminal |
 
-          Settings can also add haru to your applications and start the
-          wallpaper at login, so the bundles are only a convenience.
+          The app is signed ad-hoc rather than notarized, so the first launch
+          needs right-click → Open (once). Settings can start the wallpaper at
+          login, and can add the bare binary to your applications if you skip
+          the disk image.
 
           Browsing needs nothing. Installing needs a Steam account that owns
           Wallpaper Engine, once: `tapline login --qr`. Applying and previewing
@@ -186,10 +188,18 @@ jobs:
           rm -rf "$app"
           mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
           cp target/release/haru "$app/Contents/MacOS/haru"
-          cp packaging/haru-256.png "$app/Contents/Resources/haru.png"
-          sips -s format icns "$app/Contents/Resources/haru.png" \
-            --out "$app/Contents/Resources/haru.icns" >/dev/null
-          rm -f "$app/Contents/Resources/haru.png"
+          # A one-size icns looks soft in the Dock and wrong in the disk image,
+          # so build the whole iconset from the 1024 rendering.
+          set -- 16 32 128 256 512
+          rm -rf haru.iconset && mkdir haru.iconset
+          for size in "$@"; do
+            sips -z "$size" "$size" packaging/haru-1024.png \
+              --out "haru.iconset/icon_${size}x${size}.png" >/dev/null
+            double=$((size * 2))
+            sips -z "$double" "$double" packaging/haru-1024.png \
+              --out "haru.iconset/icon_${size}x${size}@2x.png" >/dev/null
+          done
+          iconutil -c icns haru.iconset -o "$app/Contents/Resources/haru.icns"
           v="${V#v}"
           cat > "$app/Contents/Info.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
@@ -209,13 +219,46 @@ jobs:
           </plist>
           PLIST
           codesign --force --deep --sign - "$app"
-          ditto -c -k --keepParent "$app" "haru-macos-aarch64.app.zip"
-          ls -la "haru-macos-aarch64" "haru-macos-aarch64.app.zip"
+          ls -la "haru-macos-aarch64" "$app"
+
+      # The way a Mac app arrives: a disk image that opens on the app beside a
+      # shortcut to Applications, to drag it across. create-dmg lays that window
+      # out with Finder; if it cannot (a runner without a session, say), a plain
+      # image with the same two icons still works, just unstyled.
+      - name: Build the disk image
+        run: |
+          set -euo pipefail
+          brew install create-dmg
+
+          staging=dmg-staging
+          rm -rf "$staging" && mkdir -p "$staging"
+          cp -R haru.app "$staging/"
+
+          image="haru-macos-aarch64.dmg"
+          rm -f "$image"
+          create-dmg \
+            --volname "haru" \
+            --volicon "haru.app/Contents/Resources/haru.icns" \
+            --window-pos 200 120 \
+            --window-size 640 400 \
+            --icon-size 128 \
+            --icon "haru.app" 170 190 \
+            --hide-extension "haru.app" \
+            --app-drop-link 470 190 \
+            --no-internet-enable \
+            "$image" "$staging" || true
+
+          if [ ! -f "$image" ]; then
+            echo "create-dmg produced nothing; building a plain image"
+            ln -s /Applications "$staging/Applications"
+            hdiutil create -volname "haru" -srcfolder "$staging" -ov -format UDZO "$image"
+          fi
+          ls -la "$image"
 
       - name: Upload into the draft
         run: |
           set -euo pipefail
-          files="haru-macos-aarch64 haru-macos-aarch64.app.zip"
+          files="haru-macos-aarch64 haru-macos-aarch64.dmg"
           for f in $files; do
             gh release delete-asset "$V" "$f" --yes 2>/dev/null || true
           done
