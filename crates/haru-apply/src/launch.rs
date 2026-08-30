@@ -6,6 +6,8 @@ use crate::Backend as _;
 
 const READY: Duration = Duration::from_secs(25);
 
+const APPEARS: Duration = Duration::from_secs(10);
+
 const POLL: Duration = Duration::from_millis(200);
 
 const STOP: Duration = Duration::from_secs(8);
@@ -132,14 +134,38 @@ pub fn start(binary: &Path, socket: &Path, plan: &[Plan]) -> Result<(), String> 
 }
 
 fn wait_for_process() -> Result<(), String> {
-    let deadline = Instant::now() + READY;
+    let deadline = Instant::now() + APPEARS;
     while Instant::now() < deadline {
         if running() {
             return Ok(());
         }
         std::thread::sleep(POLL);
     }
-    Err("the renderer did not come up".to_owned())
+    Err(why_it_never_started())
+}
+
+fn why_it_never_started() -> String {
+    let said = std::fs::read_to_string(log())
+        .ok()
+        .and_then(|text| {
+            text.lines()
+                .rev()
+                .find(|line| !line.trim().is_empty())
+                .map(str::to_owned)
+        })
+        .unwrap_or_default();
+
+    if said.is_empty() {
+        return format!(
+            "the renderer started and died without saying why. On macOS that is usually a \
+             broken code signature — reinstall it with `rm -f {0} && cp <build> {0}`, or run \
+             `codesign --force --sign - {0}`",
+            crate::install::installed()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "the renderer".to_owned())
+        );
+    }
+    format!("the renderer did not come up: {said}")
 }
 
 pub fn stop() -> Result<(), String> {
