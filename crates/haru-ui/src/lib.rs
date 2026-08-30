@@ -25,7 +25,7 @@ use haru_workshop::{Reply, Request, RequestId, Workshop};
 use std::path::{Path, PathBuf};
 use tapline::{BrowsePage, BrowseResult, BrowseSort, TextTarget};
 
-const TILE: f32 = 168.0;
+const TILE: f32 = 250.0;
 
 fn summary(label: &str, picked: &[String]) -> String {
     match picked.len() {
@@ -177,7 +177,11 @@ impl Browser {
             .show(ctx, |ui| self.paging(ui, previews));
         egui::CentralPanel::default()
             .frame(theme::panel_frame(theme::Side::Middle))
-            .show(ctx, |ui| self.grid(ui, previews));
+            .show(ctx, |ui| {
+                self.toolbar(ui);
+                ui.add_space(10.0);
+                self.grid(ui, previews);
+            });
     }
 
     fn collect(&mut self) {
@@ -365,79 +369,140 @@ impl Browser {
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(8.0);
-        ui.heading("haru");
-        ui.label(
-            RichText::new(format!(
-                "Wallpaper Engine Workshop · {}",
-                env!("CARGO_PKG_VERSION")
-            ))
-            .small()
-            .weak(),
-        );
-        ui.add_space(10.0);
-
-        self.search_box(ui);
-
-        ui.add_space(10.0);
-        ui.separator();
-        ui.add_space(6.0);
-
         let mut changed = false;
 
-        ui.label(RichText::new("Sort").small().weak());
-        egui::ComboBox::from_id_salt("sort")
-            .selected_text(sort_label(self.filters.sort))
-            .width(200.0)
-            .show_ui(ui, |ui| {
-                for sort in [
-                    BrowseSort::Vote,
-                    BrowseSort::Subscribed,
-                    BrowseSort::Trend,
-                    BrowseSort::Recent,
-                    BrowseSort::Updated,
-                ] {
-                    changed |= ui
-                        .selectable_value(&mut self.filters.sort, sort, sort_label(sort))
-                        .changed();
+        ui.add_space(2.0);
+        ui.horizontal(|ui| {
+            theme::heading(ui, "Filters");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if self.filters.is_narrowed()
+                    && ui
+                        .add(egui::Button::new(
+                            RichText::new("Clear all").size(11.0).color(theme::MUTED),
+                        ))
+                        .clicked()
+                {
+                    self.filters.clear();
+                    self.typed.clear();
+                    changed = true;
                 }
             });
+        });
+        ui.add_space(8.0);
 
-        if self.filters.sort == BrowseSort::Trend {
-            ui.add_space(6.0);
-            ui.label(RichText::new("Period").small().weak());
-            egui::ComboBox::from_id_salt("period")
-                .selected_text(period_label(self.filters.trend_days))
-                .width(200.0)
-                .show_ui(ui, |ui| {
-                    for (label, days) in TREND_PERIODS {
-                        changed |= ui
-                            .selectable_value(&mut self.filters.trend_days, Some(*days), *label)
-                            .changed();
-                    }
-                });
-        }
-
-        ui.add_space(12.0);
-        ui.label(RichText::new("Filters").small().weak());
-        ui.add_space(4.0);
+        self.search_box(ui);
+        ui.add_space(10.0);
 
         changed |= self.tag_groups(ui);
 
-        ui.add_space(6.0);
+        ui.add_space(8.0);
         ui.separator();
-        ui.horizontal(|ui| {
-            changed |= ui.checkbox(&mut self.filters.adult, "18+").changed();
-            if ui.button("Clear").clicked() {
-                self.filters.clear();
-                self.typed.clear();
-                changed = true;
-            }
-        });
+        ui.add_space(4.0);
+        changed |= ui
+            .checkbox(&mut self.filters.adult, "Show adult content")
+            .changed();
 
         if changed {
             self.search();
         }
+    }
+
+    /// Sort, period and what the search found — above the grid, where the eye
+    /// lands before it reaches the pictures.
+    fn toolbar(&mut self, ui: &mut egui::Ui) {
+        let mut changed = false;
+        let total = self.page.as_ref().map_or(0, |page| page.total);
+
+        ui.horizontal(|ui| {
+            theme::heading(ui, "Workshop");
+            ui.add_space(6.0);
+            if total > 0 {
+                ui.label(
+                    RichText::new(format!("{} wallpapers", thousands(u64::from(total))))
+                        .size(11.0)
+                        .color(theme::MUTED),
+                );
+            }
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                egui::ComboBox::from_id_salt("sort")
+                    .selected_text(RichText::new(sort_label(self.filters.sort)).size(12.0))
+                    .width(150.0)
+                    .show_ui(ui, |ui| {
+                        for sort in [
+                            BrowseSort::Vote,
+                            BrowseSort::Subscribed,
+                            BrowseSort::Trend,
+                            BrowseSort::Recent,
+                            BrowseSort::Updated,
+                        ] {
+                            changed |= ui
+                                .selectable_value(&mut self.filters.sort, sort, sort_label(sort))
+                                .changed();
+                        }
+                    });
+
+                if self.filters.sort == BrowseSort::Trend {
+                    egui::ComboBox::from_id_salt("period")
+                        .selected_text(
+                            RichText::new(period_label(self.filters.trend_days)).size(12.0),
+                        )
+                        .width(120.0)
+                        .show_ui(ui, |ui| {
+                            for (label, days) in TREND_PERIODS {
+                                changed |= ui
+                                    .selectable_value(
+                                        &mut self.filters.trend_days,
+                                        Some(*days),
+                                        *label,
+                                    )
+                                    .changed();
+                            }
+                        });
+                }
+            });
+        });
+
+        changed |= self.chosen_pills(ui);
+        if changed {
+            self.search();
+        }
+    }
+
+    /// Every tag currently narrowing the search, each one droppable on its own.
+    fn chosen_pills(&mut self, ui: &mut egui::Ui) -> bool {
+        let picked: Vec<(usize, String)> = self
+            .filters
+            .chosen
+            .iter()
+            .enumerate()
+            .flat_map(|(group, tags)| tags.iter().map(move |tag| (group, tag.clone())))
+            .collect();
+        if picked.is_empty() {
+            return false;
+        }
+
+        let mut dropped = None;
+        ui.add_space(6.0);
+        ui.horizontal_wrapped(|ui| {
+            for (group, tag) in &picked {
+                if theme::chip(ui, &format!("{tag}  ✕"), true)
+                    .interact(egui::Sense::click())
+                    .on_hover_text("Stop filtering by this")
+                    .clicked()
+                {
+                    dropped = Some((*group, tag.clone()));
+                }
+            }
+        });
+
+        if let Some((group, tag)) = dropped
+            && let Some(slot) = self.filters.chosen.get_mut(group)
+        {
+            slot.retain(|held| held != &tag);
+            return true;
+        }
+        false
     }
 
     fn download_row(&mut self, ui: &mut egui::Ui, found: &BrowseResult, engine: &Engine) {
@@ -897,9 +962,14 @@ impl Browser {
                     ui.label(RichText::new(why).color(ui.visuals().error_fg_color));
                 }
                 Status::Idle => {
-                    ui.label(format!("{} matches", thousands(u64::from(total))));
+                    // The count lives in the toolbar now; down here only say
+                    // what is still happening.
                     if previews.loading() > 0 {
-                        ui.weak(format!("· {} previews loading", previews.loading()));
+                        ui.label(
+                            RichText::new(format!("{} previews loading", previews.loading()))
+                                .size(11.0)
+                                .color(theme::MUTED),
+                        );
                     }
                 }
             }

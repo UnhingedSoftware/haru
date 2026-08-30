@@ -1,24 +1,32 @@
 use egui::{Color32, Rounding, Stroke, Vec2};
 
-pub const ACCENT: Color32 = Color32::from_rgb(0x8B, 0x7C, 0xFF);
+pub const ACCENT: Color32 = Color32::from_rgb(0x7C, 0x5C, 0xFF);
+
+pub const ACCENT_SOFT: Color32 = Color32::from_rgb(0x24, 0x1E, 0x45);
 
 pub const DANGER: Color32 = Color32::from_rgb(0xE5, 0x6B, 0x6F);
 
-pub const TEXT: Color32 = Color32::from_rgb(0xE9, 0xE9, 0xF2);
+pub const LOVE: Color32 = Color32::from_rgb(0xF2, 0x55, 0x7A);
 
-pub const MUTED: Color32 = Color32::from_rgb(0x96, 0x96, 0xA8);
+pub const TEXT: Color32 = Color32::from_rgb(0xE8, 0xE8, 0xF0);
 
-pub const BACKDROP: Color32 = Color32::from_rgba_premultiplied(9, 9, 13, 214);
+pub const MUTED: Color32 = Color32::from_rgb(0x8B, 0x8B, 0x9E);
 
-pub const MODAL: Color32 = Color32::from_rgb(17, 17, 24);
+pub const BACKDROP: Color32 = Color32::from_rgba_premultiplied(6, 6, 10, 220);
 
-const PANEL: Color32 = Color32::from_rgba_premultiplied(15, 15, 21, 205);
+pub const MODAL: Color32 = Color32::from_rgb(0x14, 0x14, 0x1D);
 
-const SURFACE: Color32 = Color32::from_rgba_premultiplied(30, 30, 40, 190);
+pub const BASE: Color32 = Color32::from_rgb(0x0B, 0x0B, 0x12);
 
-const SURFACE_HOVER: Color32 = Color32::from_rgba_premultiplied(44, 44, 58, 205);
+const PANEL: Color32 = Color32::from_rgb(0x10, 0x10, 0x18);
 
-const HAIRLINE: Color32 = Color32::from_rgba_premultiplied(58, 58, 74, 150);
+pub const CARD: Color32 = Color32::from_rgb(0x16, 0x16, 0x1F);
+
+const SURFACE: Color32 = Color32::from_rgb(0x1A, 0x1A, 0x24);
+
+const SURFACE_HOVER: Color32 = Color32::from_rgb(0x24, 0x24, 0x30);
+
+pub const HAIRLINE: Color32 = Color32::from_rgb(0x23, 0x23, 0x2E);
 
 pub const ICONS: &str = "icons";
 
@@ -73,13 +81,13 @@ pub fn apply(ctx: &egui::Context) {
     visuals.extreme_bg_color = SURFACE;
     visuals.faint_bg_color = Color32::from_rgba_premultiplied(255, 255, 255, 8);
     visuals.override_text_color = Some(TEXT);
-    visuals.window_rounding = Rounding::same(12.0);
+    visuals.window_rounding = Rounding::same(14.0);
     visuals.menu_rounding = Rounding::same(10.0);
     visuals.window_stroke = Stroke::new(1.0_f32, HAIRLINE);
     visuals.selection.bg_fill = ACCENT.gamma_multiply(0.45);
     visuals.selection.stroke = Stroke::new(1.0_f32, ACCENT);
 
-    let rounding = Rounding::same(6.0);
+    let rounding = Rounding::same(9.0);
     visuals.widgets.noninteractive.rounding = rounding;
     visuals.widgets.noninteractive.bg_fill = SURFACE;
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, HAIRLINE);
@@ -114,9 +122,9 @@ pub fn apply(ctx: &egui::Context) {
     };
     visuals.window_shadow = visuals.popup_shadow;
 
-    style.spacing.item_spacing = Vec2::new(8.0, 8.0);
+    style.spacing.item_spacing = Vec2::new(8.0, 9.0);
     style.spacing.text_edit_width = 200.0;
-    style.spacing.button_padding = Vec2::new(10.0, 6.0);
+    style.spacing.button_padding = Vec2::new(12.0, 7.0);
     style.spacing.menu_margin = egui::Margin::same(6.0);
     style.spacing.window_margin = egui::Margin::same(10.0);
     style.spacing.scroll.bar_width = 8.0;
@@ -125,10 +133,42 @@ pub fn apply(ctx: &egui::Context) {
     ctx.set_style(style);
 }
 
+/// A raised block with its own edge — tiles, the detail pane, filter groups.
+pub fn card(rounding: f32) -> egui::Frame {
+    egui::Frame::none()
+        .fill(CARD)
+        .rounding(Rounding::same(rounding))
+        .stroke(Stroke::new(1.0_f32, HAIRLINE))
+}
+
+/// A small rounded label: a tag, a resolution, "Audio responsive".
+pub fn chip(ui: &mut egui::Ui, text: &str, on: bool) -> egui::Response {
+    let (fill, ink) = if on {
+        (ACCENT_SOFT, ACCENT)
+    } else {
+        (SURFACE, MUTED)
+    };
+    egui::Frame::none()
+        .fill(fill)
+        .rounding(Rounding::same(6.0))
+        .inner_margin(egui::Margin::symmetric(8.0, 3.0))
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new(text).size(11.0).color(ink));
+        })
+        .response
+}
+
+pub fn heading(ui: &mut egui::Ui, text: &str) {
+    ui.label(egui::RichText::new(text).size(13.0).strong().color(TEXT));
+}
+
 pub fn panel_frame(side: Side) -> egui::Frame {
     egui::Frame::none()
-        .fill(PANEL)
-        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+        .fill(match side {
+            Side::Middle => BASE,
+            Side::Left | Side::Right => PANEL,
+        })
+        .inner_margin(egui::Margin::symmetric(16.0, 14.0))
         .stroke(match side {
             Side::Left | Side::Right => Stroke::new(1.0_f32, HAIRLINE),
             Side::Middle => Stroke::NONE,
