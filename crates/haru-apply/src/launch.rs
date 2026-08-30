@@ -280,6 +280,26 @@ fn wait_for(socket: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn the_renderer_is_found_by_its_own_name() {
+        let listing = "  501 /usr/sbin/cfprefsd\n  733 /Users/me/.local/bin/kirie\n";
+        assert_eq!(super::first_kirie(listing), Some(733));
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn something_merely_mentioning_it_is_not_the_renderer() {
+        let listing = "  90 /Applications/kirie-helper\n  91 /usr/bin/haru\n";
+        assert_eq!(super::first_kirie(listing), None);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn an_empty_table_finds_nothing() {
+        assert_eq!(super::first_kirie(""), None);
+    }
     use super::*;
 
     #[test]
@@ -354,27 +374,5 @@ mod tests {
             &[Plan::showing("DP-1", "/tmp")],
         );
         assert_eq!(refused, Err("no renderer at /nonexistent/kirie".to_owned()));
-    }
-}
-
-#[cfg(all(test, not(target_os = "linux")))]
-mod tests {
-    use super::first_kirie;
-
-    #[test]
-    fn the_renderer_is_found_by_its_own_name() {
-        let listing = "  501 /usr/sbin/cfprefsd\n  733 /Users/me/.local/bin/kirie\n";
-        assert_eq!(first_kirie(listing), Some(733));
-    }
-
-    #[test]
-    fn something_merely_mentioning_it_is_not_the_renderer() {
-        let listing = "  90 /Applications/kirie-helper\n  91 /usr/bin/haru\n";
-        assert_eq!(first_kirie(listing), None);
-    }
-
-    #[test]
-    fn an_empty_table_finds_nothing() {
-        assert_eq!(first_kirie(""), None);
     }
 }
