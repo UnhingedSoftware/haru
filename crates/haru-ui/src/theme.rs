@@ -158,6 +158,16 @@ pub fn chip(ui: &mut egui::Ui, text: &str, on: bool) -> egui::Response {
         .response
 }
 
+/// The one action a panel is really for: filled, full width, unmissable.
+pub fn primary(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    let button = egui::Button::new(egui::RichText::new(text).size(13.0).color(Color32::WHITE))
+        .fill(ACCENT)
+        .stroke(Stroke::NONE)
+        .rounding(Rounding::same(9.0))
+        .min_size(Vec2::new(ui.available_width(), 34.0));
+    ui.add(button)
+}
+
 pub fn heading(ui: &mut egui::Ui, text: &str) {
     ui.label(egui::RichText::new(text).size(13.0).strong().color(TEXT));
 }

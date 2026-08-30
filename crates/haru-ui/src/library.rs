@@ -8,7 +8,7 @@ use haru_workshop::{Reply, Request, Workshop};
 
 use crate::theme;
 
-const TILE: f32 = 168.0;
+const TILE: f32 = 250.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Order {
@@ -266,12 +266,17 @@ impl Library {
                 for row in shown.chunks(columns) {
                     ui.horizontal(|ui| {
                         for (index, item) in row {
+                            let up = self
+                                .screens
+                                .iter()
+                                .any(|screen| screen.current.as_ref() == Some(&item.dir));
                             let response = tile(
                                 ui,
                                 previews,
                                 item,
                                 tile_width,
                                 self.selected == Some(*index),
+                                up,
                             );
                             if response.clicked() {
                                 self.selected = Some(*index);
@@ -568,19 +573,20 @@ fn tile(
     item: &Installed,
     size: f32,
     selected: bool,
+    on_screen: bool,
 ) -> egui::Response {
+    let height = size * crate::tile::ASPECT + 42.0;
+
     ui.allocate_ui_with_layout(
-        Vec2::new(size, size + 40.0),
+        Vec2::new(size, height),
         Layout::top_down(Align::Min),
         |ui| {
             ui.set_min_width(size);
             ui.set_max_width(size);
-            ui.spacing_mut().item_spacing.y = 2.0;
 
-            let (rect, response) = ui.allocate_exact_size(Vec2::new(size, size), Sense::click());
-            let rounding = Rounding::same(6.0);
-            ui.painter()
-                .rect_filled(rect, rounding, ui.visuals().extreme_bg_color);
+            let (rect, response) = ui.allocate_exact_size(Vec2::new(size, height), Sense::click());
+            let rounding = Rounding::same(10.0);
+            ui.painter().rect_filled(rect, rounding, theme::CARD);
 
             let picture = ui.is_rect_visible(rect).then(|| {
                 item.preview
@@ -607,21 +613,25 @@ fn tile(
                 }
             }
 
-            if selected {
-                ui.painter()
-                    .rect_stroke(rect, rounding, Stroke::new(2.0_f32, theme::ACCENT));
-            }
-
-            ui.add_space(4.0);
-            ui.add(egui::Label::new(RichText::new(&item.title).size(12.0)).truncate());
-            ui.add(
-                egui::Label::new(
-                    RichText::new(format!("{} · {}", item.kind, human_size(item.size)))
-                        .size(11.0)
-                        .color(theme::MUTED),
-                )
-                .truncate(),
+            crate::tile::caption_for(
+                ui,
+                rect,
+                &item.title,
+                &format!("{} · {}", item.kind, human_size(item.size)),
+                on_screen.then_some("on screen"),
+                theme::ACCENT,
             );
+
+            let edge = if selected {
+                Stroke::new(2.0_f32, theme::ACCENT)
+            } else if on_screen {
+                Stroke::new(1.5_f32, theme::ACCENT.gamma_multiply(0.7))
+            } else if response.hovered() {
+                Stroke::new(1.0_f32, theme::ACCENT.gamma_multiply(0.5))
+            } else {
+                Stroke::new(1.0_f32, theme::HAIRLINE)
+            };
+            ui.painter().rect_stroke(rect, rounding, edge);
 
             response
         },

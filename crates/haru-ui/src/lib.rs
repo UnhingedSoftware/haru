@@ -564,17 +564,21 @@ impl Browser {
                 );
             }
             None if on_disk => {
-                ui.label(RichText::new("Already installed").color(theme::ACCENT));
+                ui.horizontal(|ui| {
+                    theme::chip(ui, "Installed", true);
+                    ui.label(
+                        RichText::new("ready to put up")
+                            .size(11.0)
+                            .color(theme::MUTED),
+                    );
+                });
                 if let Some(dir) = self.item_dir(id) {
                     ui.add_space(10.0);
                     self.settings_for(ui, &id.to_string(), &dir, engine);
                 }
             }
             None => {
-                if ui
-                    .add_sized([ui.available_width(), 30.0], egui::Button::new("Download"))
-                    .clicked()
-                {
+                if theme::primary(ui, "Download").clicked() {
                     if self.client {
                         self.subscribing = Some(id);
                         self.fetching = Some(self.workshop.send(Request::SubscribeViaClient {
@@ -882,12 +886,23 @@ impl Browser {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.add_space(8.0);
+                // Picture first: it is what the choice is actually made on.
+                if let Some(url) = found.preview_url.as_deref()
+                    && let Some(texture) = previews.texture(ui.ctx(), url)
+                {
+                    ui.add(
+                        egui::Image::new(&texture)
+                            .max_width(ui.available_width())
+                            .rounding(10.0),
+                    );
+                    ui.add_space(10.0);
+                }
+
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::Label::new(
                             RichText::new(plain_text(&found.item.title))
-                                .size(16.0)
+                                .size(15.0)
                                 .strong(),
                         )
                         .truncate(),
@@ -903,49 +918,87 @@ impl Browser {
                     });
                 });
 
-                if let Some(url) = found.preview_url.as_deref()
-                    && let Some(texture) = previews.texture(ui.ctx(), url)
-                {
-                    ui.add_space(6.0);
-                    ui.add(
-                        egui::Image::new(&texture)
-                            .max_width(ui.available_width())
-                            .rounding(6.0),
-                    );
-                }
-
+                Self::facts(ui, &found);
                 ui.add_space(10.0);
 
                 self.download_row(ui, &found, engine);
 
-                ui.add_space(10.0);
-                ui.label(RichText::new(human_size(found.item.size)).strong());
-                ui.label(format!("{} subscribers", thousands(found.subscriptions)));
-                ui.label(format!("{} views", thousands(found.views)));
-                if let Some(score) = found.score {
-                    ui.label(format!(
-                        "{:.0}% of {} votes",
-                        score * 100.0,
-                        thousands(found.votes_up.saturating_add(found.votes_down))
-                    ));
-                }
-
-                ui.add_space(8.0);
-                ui.horizontal_wrapped(|ui| {
-                    for tag in &found.tags {
-                        ui.label(RichText::new(tag).small().weak());
-                        ui.add_space(2.0);
-                    }
-                });
+                ui.add_space(12.0);
+                Self::numbers(ui, &found);
 
                 let description = plain_text(&found.description);
                 if !description.is_empty() {
-                    ui.add_space(8.0);
+                    ui.add_space(10.0);
                     ui.separator();
-                    ui.add_space(4.0);
-                    ui.label(description);
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(description).size(12.0).color(theme::MUTED));
                 }
             });
+    }
+
+    /// What kind of wallpaper this is, said in chips rather than a tag soup:
+    /// type and resolution first, then anything worth knowing before it runs.
+    fn facts(ui: &mut egui::Ui, found: &BrowseResult) {
+        const TELLING: [&str; 6] = [
+            "Audio responsive",
+            "Customizable",
+            "Interactive",
+            "Puppet Warp",
+            "Two Screens",
+            "Three Screens",
+        ];
+
+        let kind = found
+            .tags
+            .iter()
+            .find(|tag| matches!(tag.as_str(), "Scene" | "Video" | "Web" | "Application"));
+        let shape = found.tags.iter().find(|tag| {
+            tag.contains("16:9") || tag.contains("21:9") || tag.contains("4:3") || tag.contains(':')
+        });
+        let size = found
+            .tags
+            .iter()
+            .find(|tag| tag.ends_with('K') || tag.ends_with('p'));
+
+        ui.add_space(8.0);
+        ui.horizontal_wrapped(|ui| {
+            for chip in kind.into_iter().chain(size).chain(shape) {
+                theme::chip(ui, chip, true);
+            }
+            for tag in &found.tags {
+                if TELLING.contains(&tag.as_str()) {
+                    theme::chip(ui, tag, false);
+                }
+            }
+        });
+    }
+
+    fn numbers(ui: &mut egui::Ui, found: &BrowseResult) {
+        let votes = found.votes_up.saturating_add(found.votes_down);
+        let rows = [
+            ("Size", human_size(found.item.size)),
+            ("Subscribers", thousands(found.subscriptions)),
+            ("Favourites", thousands(found.favorites)),
+            ("Views", thousands(found.views)),
+            (
+                "Rating",
+                match found.score {
+                    Some(score) if votes > 0 => {
+                        format!("{:.0}% of {} votes", score * 100.0, thousands(votes))
+                    }
+                    _ => "not rated yet".to_owned(),
+                },
+            ),
+        ];
+
+        for (what, value) in rows {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(what).size(11.0).color(theme::MUTED));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(RichText::new(value).size(11.5));
+                });
+            });
+        }
     }
 
     fn paging(&mut self, ui: &mut egui::Ui, previews: &mut Previews) {

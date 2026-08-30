@@ -84,7 +84,7 @@ pub fn show(
                     }
                 }
 
-                caption(ui, rect, rounding, &title, found);
+                caption(ui, rect, &title, found);
 
                 let edge = if selected {
                     Stroke::new(2.0_f32, theme::ACCENT)
@@ -104,38 +104,50 @@ pub fn show(
 }
 
 /// The name sits on the picture, over a fade, the way a poster does.
-fn caption(ui: &egui::Ui, rect: egui::Rect, rounding: Rounding, title: &str, found: &BrowseResult) {
+fn caption(ui: &egui::Ui, rect: egui::Rect, title: &str, found: &BrowseResult) {
+    let loved = (found.favorites > 0).then(|| format!("♥ {}", human_count(found.favorites)));
+    caption_for(ui, rect, title, &meta(found), loved.as_deref(), theme::LOVE);
+}
+
+/// The name on the picture over a fade, the way a poster does it — shared by
+/// anything with a thumbnail, a name and a line under it.
+pub fn caption_for(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    title: &str,
+    under: &str,
+    aside: Option<&str>,
+    aside_colour: Color32,
+) {
     let band = egui::Rect::from_min_max(
         egui::pos2(rect.left(), rect.bottom() - CAPTION - 14.0),
         rect.max,
     );
-    fade(ui, band, rounding);
+    fade(ui, band);
 
     let painter = ui.painter();
     let left = band.left() + 12.0;
-    let loved = (found.favorites > 0).then(|| format!("♥ {}", human_count(found.favorites)));
 
     // Measure rather than count characters: a CJK title is half the glyphs and
-    // twice the width, and the old guess ran it under the heart.
+    // twice the width.
     let mut kept = band.width() - 24.0;
-    if let Some(loved) = &loved {
-        let hearts = one_line(ui, loved, 11.0, theme::LOVE, band.width());
+    if let Some(aside) = aside {
+        let side = one_line(ui, aside, 11.0, aside_colour, band.width());
         painter.galley(
-            egui::pos2(band.right() - 12.0 - hearts.size().x, band.bottom() - 20.0),
-            hearts.clone(),
-            theme::LOVE,
+            egui::pos2(band.right() - 12.0 - side.size().x, band.bottom() - 20.0),
+            side.clone(),
+            aside_colour,
         );
-        kept -= hearts.size().x + 10.0;
+        kept -= side.size().x + 10.0;
     }
 
     let title = one_line(ui, title, 13.0, theme::TEXT, band.width() - 24.0);
     painter.galley(egui::pos2(left, band.bottom() - 38.0), title, theme::TEXT);
 
-    let meta = one_line(ui, &meta(found), 11.0, theme::MUTED, kept.max(24.0));
-    painter.galley(egui::pos2(left, band.bottom() - 20.0), meta, theme::MUTED);
+    let under = one_line(ui, under, 11.0, theme::MUTED, kept.max(24.0));
+    painter.galley(egui::pos2(left, band.bottom() - 20.0), under, theme::MUTED);
 }
 
-/// One line, cut with an ellipsis at whatever width is left.
 fn one_line(
     ui: &egui::Ui,
     text: &str,
@@ -155,7 +167,7 @@ fn one_line(
     ui.fonts(|fonts| fonts.layout_job(job))
 }
 
-fn fade(ui: &egui::Ui, band: egui::Rect, rounding: Rounding) {
+fn fade(ui: &egui::Ui, band: egui::Rect) {
     use egui::epaint::{Mesh, Vertex};
 
     let clear = Color32::from_black_alpha(0);
@@ -175,7 +187,6 @@ fn fade(ui: &egui::Ui, band: egui::Rect, rounding: Rounding) {
     }
     mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
 
-    let _ = rounding;
     ui.painter().add(egui::Shape::mesh(mesh));
 }
 
