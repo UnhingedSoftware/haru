@@ -113,10 +113,15 @@ jobs:
           | `haru-macos-aarch64.dmg` | macOS — open it and drag haru into Applications |
           | `haru-macos-aarch64` | the same app as a bare binary, for a terminal |
 
-          The app is signed ad-hoc rather than notarized, so the first launch
-          needs right-click → Open (once). Settings can start the wallpaper at
-          login, and can add the bare binary to your applications if you skip
-          the disk image.
+          If macOS says it "could not verify haru.app", this build was not
+          notarized. Clear the download flag once and it opens normally:
+
+          ```sh
+          xattr -dr com.apple.quarantine /Applications/haru.app
+          ```
+
+          Settings can start the wallpaper at login, and can add the bare binary
+          to your applications if you skip the disk image.
 
           Browsing needs nothing. Installing needs a Steam account that owns
           Wallpaper Engine, once: `tapline login --qr`. Applying and previewing
@@ -218,8 +223,39 @@ jobs:
           </dict>
           </plist>
           PLIST
+          # Ad-hoc for now; the step below re-signs with a Developer ID when
+          # the repository has one.
           codesign --force --deep --sign - "$app"
           ls -la "haru-macos-aarch64" "$app"
+
+      # Signed and notarized builds open with a double click. Without the
+      # secrets this is skipped and the app stays ad-hoc signed, which macOS
+      # refuses to open until the quarantine flag is cleared by hand.
+      #
+      # To turn it on, add: MACOS_CERTIFICATE (base64 of a Developer ID
+      # Application .p12), MACOS_CERTIFICATE_PASSWORD, MACOS_SIGN_IDENTITY
+      # (e.g. "Developer ID Application: Name (TEAMID)"), APPLE_ID,
+      # APPLE_TEAM_ID and APPLE_APP_PASSWORD (an app-specific password).
+      - name: Sign with a Developer ID
+        if: ${{ env.MACOS_CERTIFICATE != '' }}
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          set -euo pipefail
+          echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p actions build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p actions build.keychain
+          security import certificate.p12 -k build.keychain \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k actions build.keychain >/dev/null
+          rm -f certificate.p12
+          codesign --force --deep --options runtime --timestamp \
+            --sign "$MACOS_SIGN_IDENTITY" haru.app
+          codesign --verify --strict --verbose=2 haru.app
 
       # The way a Mac app arrives: a disk image that opens on the app beside a
       # shortcut to Applications, to drag it across. create-dmg lays that window
@@ -254,6 +290,24 @@ jobs:
             hdiutil create -volname "haru" -srcfolder "$staging" -ov -format UDZO "$image"
           fi
           ls -la "$image"
+
+      # Stapling the ticket to the image means a Mac can verify it offline, so
+      # the first open is a plain double click.
+      - name: Notarize the disk image
+        if: ${{ env.APPLE_ID != '' }}
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          xcrun notarytool submit haru-macos-aarch64.dmg \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --wait
+          xcrun stapler staple haru-macos-aarch64.dmg
+          xcrun stapler validate haru-macos-aarch64.dmg
 
       - name: Upload into the draft
         run: |
