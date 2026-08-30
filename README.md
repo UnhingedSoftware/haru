@@ -34,10 +34,47 @@ it, editable live. Nothing on your screens moves.
 
 Browsing needs nothing. **Installing** needs a Steam account that owns
 Wallpaper Engine, once: `tapline login --qr`. **Applying and previewing** need
-a renderer — [kirie](https://github.com/UnhingedSoftware/kirie) on Linux.
+a renderer — [kirie](https://github.com/UnhingedSoftware/kirie), on Linux and
+macOS.
 
 Wallpapers install to `<steam library>/steamapps/workshop/content/431960/<id>`,
 where kirie, Wallpaper Engine and Steam already look.
+
+## Installing on macOS
+
+Open `haru-macos-aarch64.dmg` and drag haru into Applications, as usual.
+
+macOS will then refuse to open it:
+
+> "haru.app" Not Opened — Apple could not verify "haru.app" is free of malware…
+
+Nothing is wrong with the app. Releases are signed, but not *notarized* —
+notarizing means paying Apple for a Developer Program membership and sending
+every build to them for scanning. Until that happens macOS treats the app as
+downloaded-and-unverified, and on macOS 15 the old right-click → Open way
+around it is gone: the dialog only offers **Move to Trash** or **Done**. Press
+**Done** — not Trash — and allow it one of these two ways.
+
+**In System Settings.** Privacy & Security → scroll to Security → next to
+"haru.app was blocked to protect your Mac", press **Open Anyway**. Confirm with
+Touch ID or your password. Once is enough.
+
+**In a terminal.** Clear the flag macOS set when the file was downloaded:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/haru.app
+open /Applications/haru.app
+```
+
+kirie needs the same treatment if you downloaded its binary rather than
+building it:
+
+```sh
+xattr -d com.apple.quarantine ~/.local/bin/kirie
+```
+
+Neither step is needed for something you built yourself — the flag is only
+attached to downloads.
 
 ## Build
 
