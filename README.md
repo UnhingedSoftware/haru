@@ -5,6 +5,11 @@ Workshop, install what you like, and put it on your desktop — animated scenes,
 looping video and interactive web wallpapers — with no Steam client running and
 no Wallpaper Engine installed.
 
+**You do need to own Wallpaper Engine on Steam.** Owning it is what lets Steam
+hand over Workshop downloads and the shared assets scenes are drawn with; haru
+signs in as you, once, to fetch them. What you do not need is the Steam client
+running, Wallpaper Engine installed, or Windows.
+
 haru draws them through [kirie](https://github.com/UnhingedSoftware/kirie),
 which it fetches for you the first time you apply one. Browsing and installing
 work anywhere haru builds; putting a wallpaper up needs kirie, which supports
@@ -42,10 +47,18 @@ it, editable live. Nothing on your screens moves.
 
 ## Requirements
 
-Browsing needs nothing. **Installing** needs a Steam account that owns
-Wallpaper Engine, once: `tapline login --qr`. **Applying and previewing** need
-a renderer — [kirie](https://github.com/UnhingedSoftware/kirie), on Linux and
-macOS.
+**Browsing** the Workshop needs nothing at all — no account, no sign-in.
+
+**Installing wallpapers** and **drawing scenes** need a Steam account that owns
+Wallpaper Engine (app 431960). Steam only releases Workshop files and the
+engine's shared assets to an account that owns it, so haru asks you to sign in
+once — `tapline login --qr`, approved in the Steam mobile app. No password is
+typed or stored; a refresh token is kept for you.
+
+**Applying and previewing** need a renderer —
+[kirie](https://github.com/UnhingedSoftware/kirie) — which haru fetches for
+you. Scenes additionally need the shared assets above; video, image and web
+wallpapers do not.
 
 Wallpapers install to `<steam library>/steamapps/workshop/content/431960/<id>`,
 where kirie, Wallpaper Engine and Steam already look.
