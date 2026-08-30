@@ -190,6 +190,9 @@ impl Haru {
             self.refresh_startup();
         }
         self.updates.tick(self.config.auto_update);
+        if let Some(news) = self.updates.take_news() {
+            self.library.say(&news);
+        }
         self.engine_notes(ctx);
 
         self.overlays(ctx);

@@ -13,6 +13,14 @@ pub struct Updates {
     asked: bool,
     working: Option<Receiver<Word>>,
     note: String,
+    fresh: Option<String>,
+}
+
+impl Updates {
+    /// What just happened, once, for somewhere other than the settings pane.
+    pub fn take_news(&mut self) -> Option<String> {
+        self.fresh.take()
+    }
 }
 
 impl Updates {
@@ -69,6 +77,9 @@ impl Updates {
             match heard.try_recv() {
                 Ok(Word::Note(note)) => self.note = note,
                 Ok(Word::Done(note)) => {
+                    if !note.is_empty() && note != "everything is up to date" {
+                        self.fresh = Some(note.clone());
+                    }
                     self.note = note;
                     self.working = None;
                     return;
