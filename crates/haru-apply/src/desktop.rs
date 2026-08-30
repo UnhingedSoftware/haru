@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 const DESKTOP: &str = include_str!("../../../packaging/haru.desktop");
 const SVG: &[u8] = include_bytes!("../../../packaging/haru.svg");
+const LARGE: &[u8] = include_bytes!("../../../packaging/haru-1024.png");
 const PNGS: [(u32, &[u8]); 4] = [
     (48, include_bytes!("../../../packaging/haru-48.png")),
     (64, include_bytes!("../../../packaging/haru-64.png")),
@@ -128,19 +129,51 @@ fn bundle(path: &Path, binary: &Path) -> Result<(), String> {
     let _ = std::fs::remove_file(&inside);
     std::fs::copy(binary, &inside).map_err(|error| format!("{}: {error}", inside.display()))?;
 
-    let png = resources.join("haru.png");
-    if std::fs::write(&png, PNGS[3].1).is_ok() {
-        let _ = std::process::Command::new("sips")
-            .args(["-s", "format", "icns"])
-            .arg(&png)
-            .arg("--out")
-            .arg(resources.join("haru.icns"))
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-        let _ = std::fs::remove_file(&png);
-    }
+    icon(&resources);
     Ok(())
+}
+
+// A single-size icns looks soft in the Dock, so build the whole iconset the
+// way the release does. Best effort: an app without an icon still runs.
+fn icon(resources: &Path) {
+    let png = resources.join("haru.png");
+    if std::fs::write(&png, LARGE).is_err() {
+        return;
+    }
+    let iconset = resources.join("haru.iconset");
+    let _ = std::fs::remove_dir_all(&iconset);
+    if std::fs::create_dir_all(&iconset).is_err() {
+        let _ = std::fs::remove_file(&png);
+        return;
+    }
+
+    for size in [16_u32, 32, 128, 256, 512] {
+        for (pixels, name) in [
+            (size, format!("icon_{size}x{size}.png")),
+            (size * 2, format!("icon_{size}x{size}@2x.png")),
+        ] {
+            let _ = std::process::Command::new("sips")
+                .args(["-z", &pixels.to_string(), &pixels.to_string()])
+                .arg(&png)
+                .arg("--out")
+                .arg(iconset.join(name))
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+    }
+
+    let _ = std::process::Command::new("iconutil")
+        .args(["-c", "icns"])
+        .arg(&iconset)
+        .arg("-o")
+        .arg(resources.join("haru.icns"))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    let _ = std::fs::remove_dir_all(&iconset);
+    let _ = std::fs::remove_file(&png);
 }
 
 #[must_use]
