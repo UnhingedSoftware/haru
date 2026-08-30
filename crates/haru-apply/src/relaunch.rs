@@ -53,6 +53,26 @@ impl Backend for Relaunch {
         Ok(())
     }
 
+    fn tune(&self, _commands: &[String]) -> Result<(), String> {
+        let showing = self
+            .showing
+            .lock()
+            .ok()
+            .and_then(|showing| showing.clone())
+            .filter(|dir| dir.is_dir());
+        let Some(dir) = showing else {
+            return Ok(());
+        };
+        if !launch::running() {
+            return Ok(());
+        }
+        launch::restart(
+            &self.binary()?,
+            &self.socket,
+            &[Plan::showing(DESKTOP, &dir)],
+        )
+    }
+
     fn set_property(&self, _screen: &str, _key: &str, _value: &str) -> Result<(), String> {
         Err("changing a property while it runs needs the control socket, which this platform does not have yet".to_owned())
     }
