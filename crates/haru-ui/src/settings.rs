@@ -43,6 +43,8 @@ pub struct Actions {
 
 #[derive(Default)]
 pub struct Settings {
+    update_note: String,
+    renderer_seen: Option<(std::path::PathBuf, String)>,
     pending_tune: bool,
     pending_relaunch: bool,
     assets_note: String,
@@ -70,6 +72,7 @@ impl Settings {
             .unwrap_or_default();
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn ui(
         &mut self,
         ctx: &egui::Context,
@@ -78,8 +81,10 @@ impl Settings {
         signed_in: Option<&str>,
         client: bool,
         assets_note: &str,
+        update_note: &str,
     ) -> Actions {
         self.assets_note = assets_note.to_owned();
+        self.update_note = update_note.to_owned();
         let mut actions = Actions::default();
 
         egui::CentralPanel::default()
@@ -103,6 +108,8 @@ impl Settings {
                         self.libraries(ui, config, &mut actions);
                         ui.add_space(18.0);
                         Self::browsing(ui, config, &mut actions);
+                        ui.add_space(18.0);
+                        self.about(ui, config, engine, &mut actions);
                         ui.add_space(18.0);
                         self.saving(ui, config);
                     });
@@ -627,6 +634,102 @@ impl Settings {
         });
 
         ui.add_space(18.0);
+    }
+
+    // Versions and where things live, so a machine can be tidied up without
+    // guessing which binary is running.
+    fn about(
+        &mut self,
+        ui: &mut egui::Ui,
+        config: &mut Config,
+        engine: &Engine,
+        actions: &mut Actions,
+    ) {
+        ui.label(RichText::new("Versions and files").strong());
+        ui.add_space(6.0);
+
+        if !self.update_note.is_empty() {
+            ui.label(RichText::new(&self.update_note).color(theme::ACCENT));
+            ui.add_space(6.0);
+        }
+        actions.changed |= ui
+            .checkbox(
+                &mut config.auto_update,
+                "Keep haru and the renderer up to date",
+            )
+            .on_hover_text("Fetches the renderer when it is missing, and newer releases of both.")
+            .changed();
+        ui.add_space(8.0);
+
+        let mine = std::env::current_exe().ok();
+        Self::entry(
+            ui,
+            &format!("haru {}", env!("CARGO_PKG_VERSION")),
+            mine.as_deref(),
+        );
+
+        let binary = engine.snapshot().binary;
+        let version = binary
+            .as_deref()
+            .and_then(|path| self.renderer_version(path));
+        let named = match version {
+            Some(version) => format!("kirie {version}"),
+            None if binary.is_some() => "kirie (version unknown)".to_owned(),
+            None => "kirie is not installed".to_owned(),
+        };
+        Self::entry(ui, &named, binary.as_deref());
+
+        ui.add_space(6.0);
+        for (what, path) in [
+            ("wallpapers", haru_core::Config::load().install_root()),
+            ("engine assets", haru_core::engine::assets_home()),
+            ("settings", Config::path()),
+            (
+                "at login",
+                haru_apply::startup::enabled()
+                    .then(haru_apply::startup::entry)
+                    .flatten(),
+            ),
+            (
+                "in applications",
+                haru_apply::desktop::installed()
+                    .then(haru_apply::desktop::entry)
+                    .flatten(),
+            ),
+        ] {
+            if let Some(path) = path {
+                Self::entry(ui, what, Some(&path));
+            }
+        }
+    }
+
+    fn entry(ui: &mut egui::Ui, what: &str, path: Option<&std::path::Path>) {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(what).color(theme::MUTED));
+            if let Some(path) = path {
+                let text = path.to_string_lossy().into_owned();
+                let shown = RichText::new(&text).small().color(if path.exists() {
+                    theme::MUTED
+                } else {
+                    theme::DANGER
+                });
+                if ui.selectable_label(false, shown).clicked() {
+                    ui.ctx().copy_text(text);
+                }
+            }
+        });
+    }
+
+    // Asking a binary its version means running it, so ask once per path.
+    fn renderer_version(&mut self, binary: &std::path::Path) -> Option<String> {
+        if let Some((seen, version)) = &self.renderer_seen
+            && seen == binary
+        {
+            return Some(version.clone());
+        }
+        let version = haru_apply::install::version_of(binary)?;
+        self.renderer_seen = Some((binary.to_path_buf(), version.clone()));
+        Some(version)
     }
 
     fn saving(&mut self, ui: &mut egui::Ui, config: &Config) {

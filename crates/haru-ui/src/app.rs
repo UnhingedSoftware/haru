@@ -54,6 +54,7 @@ pub struct Haru {
     scanned: bool,
     account: Account,
     installer: crate::renderer::Installer,
+    updates: crate::updates::Updates,
     workshop: Rc<Workshop>,
     who_request: Option<haru_workshop::RequestId>,
     sign_in_request: Option<haru_workshop::RequestId>,
@@ -137,6 +138,7 @@ impl Haru {
             sidebar: true,
             account: Account::new(),
             installer,
+            updates: crate::updates::Updates::default(),
             workshop,
             asked_who: false,
             who_request: None,
@@ -187,6 +189,7 @@ impl Haru {
             let _ = self.config.save();
             self.refresh_startup();
         }
+        self.updates.tick(self.config.auto_update);
         self.engine_notes(ctx);
 
         self.overlays(ctx);
@@ -331,6 +334,7 @@ impl Haru {
             self.account.who(),
             self.account.has_client(),
             &self.assets_note,
+            self.updates.note(),
         );
         if asked.sign_in {
             self.account.open();

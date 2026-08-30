@@ -8,6 +8,7 @@ mod renderer;
 mod settings;
 pub mod theme;
 mod tile;
+mod updates;
 mod widgets;
 
 pub use account::Account;

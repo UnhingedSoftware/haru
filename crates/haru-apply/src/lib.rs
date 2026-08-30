@@ -9,6 +9,7 @@ mod offscreen;
 mod relaunch;
 pub mod startup;
 mod stream;
+pub mod update;
 
 pub use engine::{Engine, Snapshot};
 pub use kirie::Kirie;

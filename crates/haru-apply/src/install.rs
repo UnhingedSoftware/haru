@@ -139,6 +139,21 @@ pub fn installed() -> Option<PathBuf> {
     places.into_iter().find(|path| path.is_file())
 }
 
+// kirie prints its name and version when it is run with nothing to do.
+#[must_use]
+pub fn version_of(binary: &Path) -> Option<String> {
+    let spoke = std::process::Command::new(binary)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let said = String::from_utf8_lossy(&spoke.stdout);
+    let line = said.lines().next()?.trim();
+    line.strip_prefix("kirie ")
+        .map(str::to_owned)
+        .filter(|version| !version.is_empty())
+}
+
 #[must_use]
 pub fn destination() -> Option<PathBuf> {
     std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/bin/kirie"))
@@ -161,7 +176,11 @@ pub struct Build {
 }
 
 pub fn latest(web: Web) -> Result<Build, String> {
-    let url = format!("https://api.github.com/repos/{REPOSITORY}/releases/latest");
+    latest_from(REPOSITORY, &web.asset())
+}
+
+pub fn latest_from(repository: &str, asset: &str) -> Result<Build, String> {
+    let url = format!("https://api.github.com/repos/{repository}/releases/latest");
     let body = ureq::get(&url)
         .set("User-Agent", AGENT)
         .set("Accept", "application/vnd.github+json")
@@ -180,7 +199,7 @@ pub fn latest(web: Web) -> Result<Build, String> {
         .ok_or("the release has no tag")?
         .to_owned();
 
-    let (url, sha256, size) = asset_in(&release, &tag, web)?;
+    let (url, sha256, size) = asset_in(&release, &tag, asset)?;
 
     Ok(Build {
         tag,
@@ -193,18 +212,15 @@ pub fn latest(web: Web) -> Result<Build, String> {
 fn asset_in(
     release: &serde_json::Value,
     tag: &str,
-    web: Web,
+    wanted: &str,
 ) -> Result<(String, String, u64), String> {
     let assets = release
         .get("assets")
         .and_then(serde_json::Value::as_array)
         .ok_or("the release lists no files")?;
-    let wanted = web.asset();
     let asset = assets
         .iter()
-        .find(|asset| {
-            asset.get("name").and_then(serde_json::Value::as_str) == Some(wanted.as_str())
-        })
+        .find(|asset| asset.get("name").and_then(serde_json::Value::as_str) == Some(wanted))
         .ok_or_else(|| format!("{tag} has no {wanted}"))?;
 
     let url = asset
@@ -247,7 +263,11 @@ pub fn fetch(
         .call()
         .map_err(|error| format!("the download failed ({error})"))?;
 
-    let staged = parent.join(format!("kirie.{}.part", std::process::id()));
+    let name = target
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "download".to_owned());
+    let staged = parent.join(format!("{name}.{}.part", std::process::id()));
     let outcome = write(response, build, &staged, progress);
     match outcome {
         Ok(()) => {
