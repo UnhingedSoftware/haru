@@ -11,9 +11,9 @@ name: Release
 # Artifact: one standalone executable — download, chmod +x, run.
 #   haru-linux-x86_64
 #
-# No Windows or macOS artifact yet. The code is written to build there — only
-# haru-apply knows a platform — but neither is built or run in CI, and shipping
-# a binary nobody has started would be a guess.
+# macOS artifacts are built by a second job on GitHub-hosted runners, which
+# uploads straight into the draft this one creates — no CI artifact storage in
+# the middle. No Windows build yet.
 on:
   workflow_dispatch:
     inputs:
@@ -31,6 +31,8 @@ env:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -108,6 +110,13 @@ jobs:
           | --- | --- |
           | `haru-linux-x86_64` | the picker — `chmod +x`, run |
           | `haru-desktop-linux.tar.gz` | desktop entry and icons: `tar xf`, then `packaging/install.sh ./haru-linux-x86_64` |
+          | `haru-macos-aarch64` | Apple Silicon build |
+          | `haru-macos-x86_64` | Intel build |
+          | `haru-macos-aarch64.app.zip` | the same, as an app bundle: unzip into `~/Applications` |
+          | `haru-macos-x86_64.app.zip` | the Intel app bundle |
+
+          Settings can also add haru to your applications and start the
+          wallpaper at login, so the bundles are only a convenience.
 
           Browsing needs nothing. Installing needs a Steam account that owns
           Wallpaper Engine, once: `tapline login --qr`. Applying and previewing
@@ -136,3 +145,93 @@ jobs:
               --notes-file RELEASE_NOTES.md $files
           fi
           echo "Draft $V ready."
+
+  # macOS artifacts, uploaded into the draft the job above made. GitHub-hosted
+  # runners: the self-hosted ones are Linux.
+  macos:
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            asset: haru-macos-aarch64
+          - runner: macos-13
+            asset: haru-macos-x86_64
+    runs-on: ${{ matrix.runner }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      V: ${{ needs.release.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.asset }}
+
+      - name: Set crate version
+        run: |
+          python3 - <<'PY'
+          import os, re
+          want = os.environ["V"].lstrip("v")
+          text = open("Cargo.toml").read()
+          text = re.sub(r'^version = "\d+\.\d+\.\d+"', f'version = "{want}"', text, count=1, flags=re.M)
+          open("Cargo.toml", "w").write(text)
+          PY
+
+      - run: cargo build --release -p haru
+
+      - name: Stage the binary and the app bundle
+        run: |
+          set -euo pipefail
+          cp target/release/haru "${{ matrix.asset }}"
+          chmod +x "${{ matrix.asset }}"
+
+          app="haru.app"
+          rm -rf "$app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp target/release/haru "$app/Contents/MacOS/haru"
+          cp packaging/haru-256.png "$app/Contents/Resources/haru.png"
+          sips -s format icns "$app/Contents/Resources/haru.png" \
+            --out "$app/Contents/Resources/haru.icns" >/dev/null
+          rm -f "$app/Contents/Resources/haru.png"
+          v="${V#v}"
+          cat > "$app/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>haru</string>
+            <key>CFBundleDisplayName</key><string>haru</string>
+            <key>CFBundleIdentifier</key><string>dev.unhingedsoftware.haru</string>
+            <key>CFBundleVersion</key><string>$v</string>
+            <key>CFBundleShortVersionString</key><string>$v</string>
+            <key>CFBundleExecutable</key><string>haru</string>
+            <key>CFBundleIconFile</key><string>haru</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+          codesign --force --deep --sign - "$app"
+          ditto -c -k --keepParent "$app" "${{ matrix.asset }}.app.zip"
+          ls -la "${{ matrix.asset }}" "${{ matrix.asset }}.app.zip"
+
+      - name: Upload into the draft
+        run: |
+          set -euo pipefail
+          files="${{ matrix.asset }} ${{ matrix.asset }}.app.zip"
+          for f in $files; do
+            gh release delete-asset "$V" "$f" --yes 2>/dev/null || true
+          done
+          for attempt in 1 2 3; do
+            if gh release upload "$V" $files --clobber; then exit 0; fi
+            echo "upload attempt $attempt failed; retrying in 20s"
+            sleep 20
+          done
+          echo "::error::could not upload the macOS assets"; exit 1

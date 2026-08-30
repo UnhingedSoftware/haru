@@ -23,10 +23,13 @@ pub enum Web {
 
 impl Web {
     #[must_use]
-    pub const fn asset(self) -> &'static str {
+    pub fn asset(self) -> String {
+        if cfg!(target_os = "macos") {
+            return format!("kirie-macos-{}", machine());
+        }
         match self {
-            Self::WebKit => "kirie-web-webview-linux-x86_64",
-            Self::Cef => "kirie-web-cef-linux-x86_64",
+            Self::WebKit => format!("kirie-web-webview-linux-{}", machine()),
+            Self::Cef => format!("kirie-web-cef-linux-{}", machine()),
         }
     }
 
@@ -57,12 +60,22 @@ impl Web {
 
     #[must_use]
     pub fn suggested() -> Self {
-        if webkit_present() {
+        if cfg!(target_os = "macos") || webkit_present() {
             Self::WebKit
         } else {
             Self::Cef
         }
     }
+
+    #[must_use]
+    pub fn choosable() -> bool {
+        !cfg!(target_os = "macos")
+    }
+}
+
+#[must_use]
+const fn machine() -> &'static str {
+    std::env::consts::ARCH
 }
 
 #[must_use]
@@ -133,7 +146,10 @@ pub fn destination() -> Option<PathBuf> {
 
 #[must_use]
 pub const fn supported() -> bool {
-    cfg!(all(target_os = "linux", target_arch = "x86_64"))
+    cfg!(any(
+        all(target_os = "linux", target_arch = "x86_64"),
+        target_os = "macos"
+    ))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -183,10 +199,13 @@ fn asset_in(
         .get("assets")
         .and_then(serde_json::Value::as_array)
         .ok_or("the release lists no files")?;
+    let wanted = web.asset();
     let asset = assets
         .iter()
-        .find(|asset| asset.get("name").and_then(serde_json::Value::as_str) == Some(web.asset()))
-        .ok_or_else(|| format!("{tag} has no {}", web.asset()))?;
+        .find(|asset| {
+            asset.get("name").and_then(serde_json::Value::as_str) == Some(wanted.as_str())
+        })
+        .ok_or_else(|| format!("{tag} has no {wanted}"))?;
 
     let url = asset
         .get("browser_download_url")
@@ -320,8 +339,16 @@ mod tests {
     }
 
     #[test]
-    fn the_two_builds_are_different_files() {
-        assert_ne!(Web::WebKit.asset(), Web::Cef.asset());
+    fn the_build_matches_this_platform() {
+        let asset = Web::suggested().asset();
+        if cfg!(target_os = "macos") {
+            assert!(asset.starts_with("kirie-macos-"), "{asset}");
+            assert_eq!(Web::WebKit.asset(), Web::Cef.asset());
+            assert!(!Web::choosable());
+        } else {
+            assert!(asset.contains("linux"), "{asset}");
+            assert_ne!(Web::WebKit.asset(), Web::Cef.asset());
+        }
     }
 
     #[test]

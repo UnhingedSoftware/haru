@@ -37,6 +37,7 @@ pub struct Actions {
     pub tune: bool,
     pub relaunch: bool,
     pub startup: Option<bool>,
+    pub register: Option<bool>,
     pub renderer: Option<Renderer>,
 }
 
@@ -192,6 +193,34 @@ impl Settings {
         ui.add_space(8.0);
     }
 
+    fn as_application(ui: &mut egui::Ui, actions: &mut Actions) {
+        let there = haru_apply::desktop::installed();
+        ui.horizontal(|ui| {
+            if there {
+                ui.label(RichText::new("haru is in your applications").color(theme::MUTED));
+                if ui.button("Remove").clicked() {
+                    actions.register = Some(false);
+                }
+            } else {
+                if ui
+                    .button(if cfg!(target_os = "macos") {
+                        "Add haru to Applications"
+                    } else {
+                        "Add haru to your menu"
+                    })
+                    .on_hover_text(if cfg!(target_os = "macos") {
+                        "Builds ~/Applications/haru.app around this binary."
+                    } else {
+                        "Writes a desktop entry and icons for this binary."
+                    })
+                    .clicked()
+                {
+                    actions.register = Some(true);
+                }
+            }
+        });
+    }
+
     fn at_login(ui: &mut egui::Ui, actions: &mut Actions) {
         let mut on = haru_apply::startup::enabled();
         if ui
@@ -226,6 +255,8 @@ impl Settings {
         Self::engine_assets(ui, actions, self.assets_note.clone());
         ui.add_space(6.0);
         Self::at_login(ui, actions);
+        ui.add_space(6.0);
+        Self::as_application(ui, actions);
         ui.add_space(6.0);
 
         match (engine.available, engine.pid) {

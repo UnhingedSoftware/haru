@@ -354,6 +354,18 @@ impl Haru {
         if asked.sign_out {
             self.sign_out_request = Some(self.workshop.send(Request::SignOut));
         }
+        if let Some(on) = asked.register {
+            self.settings.note(if on {
+                match haru_apply::desktop::install() {
+                    Ok(path) => Some(format!("added {}", path.display())),
+                    Err(why) => Some(why),
+                }
+            } else {
+                haru_apply::desktop::uninstall()
+                    .err()
+                    .or_else(|| Some("removed".to_owned()))
+            });
+        }
         if let Some(on) = asked.startup {
             self.settings.note(if on {
                 self.register_startup()

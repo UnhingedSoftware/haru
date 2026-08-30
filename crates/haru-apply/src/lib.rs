@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+pub mod desktop;
 pub mod engine;
 pub mod install;
 mod kirie;
