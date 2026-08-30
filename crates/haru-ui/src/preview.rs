@@ -40,6 +40,7 @@ pub struct Preview {
     pending: Arc<Mutex<Option<Job>>>,
     frames: Receiver<Frame>,
     wake: Sender<()>,
+    wants_library: bool,
 }
 
 impl Default for Preview {
@@ -77,6 +78,7 @@ impl Preview {
             pending,
             frames,
             wake,
+            wants_library: false,
         }
     }
 
@@ -207,14 +209,41 @@ impl Preview {
         }
     }
 
+    /// Nothing is loaded: say what this tab is for, not just that it is empty.
+    fn nothing_yet(&mut self, ui: &mut egui::Ui) {
+        ui.vertical_centered(|ui| {
+            ui.add_space(ui.available_height() * 0.34);
+            ui.label(RichText::new("Nothing to preview yet").size(15.0).strong());
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(
+                    "Open one from your Library and press Preview. It is drawn off-screen \
+                     with its own settings beside it — nothing on your desktop moves.",
+                )
+                .size(12.0)
+                .color(theme::MUTED),
+            );
+            ui.add_space(14.0);
+            if ui
+                .add(
+                    egui::Button::new(RichText::new("Go to Library").size(12.5).color(theme::TEXT))
+                        .min_size(egui::vec2(150.0, 30.0)),
+                )
+                .clicked()
+            {
+                self.wants_library = true;
+            }
+        });
+    }
+
+    /// The empty state offers a way out of itself; the app reads this.
+    pub fn take_wants_library(&mut self) -> bool {
+        std::mem::take(&mut self.wants_library)
+    }
+
     fn canvas(&mut self, ui: &mut egui::Ui) {
         let Some(item) = self.item.clone() else {
-            ui.centered_and_justified(|ui| {
-                ui.label(
-                    RichText::new("Pick a wallpaper in the Library and press Preview.")
-                        .color(theme::MUTED),
-                );
-            });
+            self.nothing_yet(ui);
             return;
         };
 

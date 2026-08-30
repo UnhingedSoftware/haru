@@ -173,7 +173,12 @@ impl Haru {
                     self.sidebar,
                 );
             }
-            Tab::Preview => self.preview.ui(ctx, self.sidebar),
+            Tab::Preview => {
+                self.preview.ui(ctx, self.sidebar);
+                if self.preview.take_wants_library() {
+                    self.tab = Tab::Library;
+                }
+            }
             Tab::Settings => self.settings_tab(ctx),
         }
 
