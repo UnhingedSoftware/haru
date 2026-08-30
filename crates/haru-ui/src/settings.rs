@@ -4,6 +4,14 @@ use haru_core::Config;
 
 use crate::theme;
 
+fn frames(value: f64) -> String {
+    if value <= 0.0 {
+        "unlimited".to_owned()
+    } else {
+        format!("{value:.0} fps")
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Renderer {
     Start,
@@ -18,11 +26,15 @@ pub struct Actions {
     pub sign_out: bool,
     pub install: bool,
     pub fetch_assets: bool,
+    pub tune: bool,
+    pub relaunch: bool,
     pub renderer: Option<Renderer>,
 }
 
 #[derive(Default)]
 pub struct Settings {
+    pending_tune: bool,
+    pending_relaunch: bool,
     assets_note: String,
     socket: String,
     install: String,
@@ -69,6 +81,8 @@ impl Settings {
                         self.steam(ui, signed_in, client, &mut actions);
                         ui.add_space(18.0);
                         self.renderer(ui, config, &engine.snapshot(), &mut actions);
+                        ui.add_space(18.0);
+                        self.wallpaper(ui, config, &mut actions);
                         ui.add_space(18.0);
                         self.installing(ui, config, &mut actions);
                         ui.add_space(18.0);
@@ -309,6 +323,110 @@ impl Settings {
                 );
             }
         });
+    }
+
+    fn wallpaper(&mut self, ui: &mut egui::Ui, config: &mut Config, actions: &mut Actions) {
+        use haru_core::renderer::{Clamp, Scaling};
+
+        let before = config.renderer;
+        ui.label(RichText::new("Wallpaper").strong());
+        ui.add_space(2.0);
+        ui.label(
+            RichText::new("Applies to every wallpaper, whatever it asks for itself.")
+                .weak()
+                .size(11.0),
+        );
+        ui.add_space(8.0);
+
+        ui.horizontal(|ui| {
+            ui.label("Sizing");
+            egui::ComboBox::from_id_salt("haru-scaling")
+                .selected_text(config.renderer.scaling.label())
+                .show_ui(ui, |ui| {
+                    for choice in Scaling::ALL {
+                        ui.selectable_value(&mut config.renderer.scaling, choice, choice.label());
+                    }
+                });
+        });
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label("Outside the edges");
+            egui::ComboBox::from_id_salt("haru-clamp")
+                .selected_text(config.renderer.clamp.label())
+                .show_ui(ui, |ui| {
+                    for choice in Clamp::ALL {
+                        ui.selectable_value(&mut config.renderer.clamp, choice, choice.label());
+                    }
+                });
+        });
+
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            ui.label("Frame rate");
+            ui.add(
+                egui::Slider::new(&mut config.renderer.fps, 0..=240)
+                    .custom_formatter(|value, _| frames(value)),
+            )
+            .on_hover_text("0 leaves it to the wallpaper and the screen.");
+        });
+        ui.horizontal(|ui| {
+            ui.label("On battery");
+            ui.add(
+                egui::Slider::new(&mut config.renderer.battery_fps, 0..=120)
+                    .custom_formatter(|value, _| frames(value)),
+            )
+            .on_hover_text("Used while the machine runs on battery.");
+        });
+        ui.horizontal(|ui| {
+            ui.label("Render scale");
+            ui.add(egui::Slider::new(&mut config.renderer.render_scale, 0.25..=2.0).step_by(0.05))
+                .on_hover_text("Below 1.0 draws smaller and scales up: cheaper, softer.");
+        });
+        ui.horizontal(|ui| {
+            ui.label("Speed");
+            ui.add(egui::Slider::new(&mut config.renderer.playback_speed, 0.1..=4.0).step_by(0.1));
+        });
+
+        ui.add_space(10.0);
+        ui.checkbox(&mut config.renderer.mute, "Mute");
+        ui.add_enabled_ui(!config.renderer.mute, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Volume");
+                ui.add(egui::Slider::new(&mut config.renderer.volume, 0..=100));
+            });
+        });
+
+        ui.add_space(10.0);
+        ui.checkbox(&mut config.renderer.disable_parallax, "No parallax")
+            .on_hover_text("Stops the scene leaning towards the pointer.");
+        ui.checkbox(&mut config.renderer.disable_mouse, "Ignore the pointer");
+        ui.checkbox(&mut config.renderer.disable_particles, "No particles");
+        ui.checkbox(
+            &mut config.renderer.no_automute,
+            "Keep sound when something else plays",
+        );
+        ui.checkbox(
+            &mut config.renderer.no_audio_processing,
+            "No audio reactivity",
+        )
+        .on_hover_text("Wallpapers that dance to sound stop listening.");
+        ui.checkbox(
+            &mut config.renderer.no_fullscreen_pause,
+            "Keep drawing behind fullscreen windows",
+        );
+
+        if config.renderer != before {
+            self.pending_tune = true;
+            self.pending_relaunch |= before.needs_relaunch(&config.renderer);
+        }
+
+        let settling = ui.ctx().input(|input| input.pointer.any_down());
+        if self.pending_tune && !settling {
+            actions.tune = true;
+            actions.relaunch |= self.pending_relaunch;
+            self.pending_tune = false;
+            self.pending_relaunch = false;
+        }
     }
 
     fn installing(&mut self, ui: &mut egui::Ui, config: &mut Config, actions: &mut Actions) {

@@ -78,6 +78,18 @@ impl Backend for Kirie {
         }
     }
 
+    fn tune(&self, commands: &[String]) -> Result<(), String> {
+        for command in commands {
+            let reply = self.ask(command)?;
+            match reply.first().map(|line| line.trim()) {
+                Some("ok" | "unknown command") | None => {}
+                Some("error") => return Err(format!("the renderer would not take `{command}`")),
+                Some(other) => return Err(format!("unexpected answer: {other}")),
+            }
+        }
+        Ok(())
+    }
+
     fn stage(&self, key: &str, value: &str) -> Result<(), String> {
         let reply = self.ask(&format!("stage {key} {value}"))?;
         match reply.first().map(|line| line.trim()) {

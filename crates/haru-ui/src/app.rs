@@ -353,6 +353,16 @@ impl Haru {
         if asked.sign_out {
             self.sign_out_request = Some(self.workshop.send(Request::SignOut));
         }
+        if asked.tune {
+            let _ = self.config.save();
+            self.engine.tune(self.config.renderer.live_commands());
+        }
+        if asked.relaunch && haru_apply::launch::running() {
+            let plan = self.current_plan();
+            if !plan.is_empty() {
+                self.engine.restart(plan);
+            }
+        }
         if asked.changed {
             self.engine = Engine::spawn(self.config.socket.clone());
             self.browser.reconfigure(
@@ -364,6 +374,21 @@ impl Haru {
             self.browser.set_install_root(self.config.install_root());
             self.scanned = false;
         }
+    }
+
+    fn current_plan(&self) -> Vec<haru_apply::launch::Plan> {
+        let seen = self.engine.snapshot();
+        seen.screens
+            .into_iter()
+            .filter_map(|found| {
+                let wallpaper = found
+                    .current
+                    .or_else(|| self.config.screens.get(&found.name).cloned())?;
+                wallpaper
+                    .is_dir()
+                    .then(|| haru_apply::launch::Plan::showing(found.name, wallpaper))
+            })
+            .collect()
     }
 
     fn plan_for(&self, screen: &str, dir: &std::path::Path) -> Vec<haru_apply::launch::Plan> {

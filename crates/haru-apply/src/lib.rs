@@ -32,6 +32,11 @@ pub trait Backend: Send + Sync {
     fn set_property(&self, screen: &str, key: &str, value: &str) -> Result<(), String>;
 
     fn stage(&self, key: &str, value: &str) -> Result<(), String>;
+
+    fn tune(&self, commands: &[String]) -> Result<(), String> {
+        let _ = commands;
+        Ok(())
+    }
 }
 
 #[must_use]

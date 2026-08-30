@@ -114,6 +114,7 @@ pub fn start(binary: &Path, socket: &Path, plan: &[Plan]) -> Result<(), String> 
     }
 
     let mut arguments = vec![format!("--control-socket={}", socket.display())];
+    arguments.extend(haru_core::Config::load().renderer.arguments());
     for screen in plan {
         if cfg!(target_os = "linux") {
             arguments.push(format!("--screen-root={}", screen.screen));

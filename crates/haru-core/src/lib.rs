@@ -3,6 +3,7 @@ pub mod engine;
 pub mod library;
 pub mod overrides;
 pub mod properties;
+pub mod renderer;
 
 pub use config::Config;
 pub use library::Installed;

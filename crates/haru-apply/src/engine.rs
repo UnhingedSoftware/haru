@@ -31,6 +31,7 @@ enum Job {
     },
     Start(Vec<Plan>),
     Restart(Vec<Plan>),
+    Tune(Vec<String>),
     Stop,
 }
 
@@ -113,6 +114,11 @@ impl Engine {
         let _ = self.jobs.send(Job::Restart(plan));
     }
 
+    pub fn tune(&self, commands: Vec<String>) {
+        self.working();
+        let _ = self.jobs.send(Job::Tune(commands));
+    }
+
     pub fn stop(&self) {
         self.working();
         let _ = self.jobs.send(Job::Stop);
@@ -176,6 +182,9 @@ fn run(
         Job::Start(plan) => start(socket, shared, &plan, false),
         Job::Restart(plan) => start(socket, shared, &plan, true),
         Job::Stop => launch::stop().map(|()| "the renderer is stopped".to_owned()),
+        Job::Tune(commands) => engine
+            .tune(&commands)
+            .map(|()| "settings applied".to_owned()),
     }
 }
 

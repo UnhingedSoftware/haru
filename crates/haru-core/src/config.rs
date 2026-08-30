@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub install_dir: Option<PathBuf>,
@@ -16,6 +16,7 @@ pub struct Config {
     pub renderer_web: Option<String>,
     pub offer_renderer: bool,
     pub infinite_scroll: bool,
+    pub renderer: crate::renderer::Renderer,
 }
 
 impl Default for Config {
@@ -31,6 +32,7 @@ impl Default for Config {
             renderer_web: None,
             offer_renderer: true,
             infinite_scroll: false,
+            renderer: crate::renderer::Renderer::default(),
         }
     }
 }
