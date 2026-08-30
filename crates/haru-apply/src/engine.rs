@@ -142,7 +142,10 @@ fn worker(
     loop {
         match queue.recv_timeout(POLL) {
             Ok(job) => {
-                let note = run(engine, socket, job, shared);
+                let note = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    run(engine, socket, job, shared)
+                }))
+                .unwrap_or_else(|_| Err("that job failed unexpectedly".to_owned()));
                 if notes.send(note).is_err() {
                     return;
                 }
@@ -151,7 +154,11 @@ fn worker(
                     snapshot.working = false;
                 }
             }
-            Err(RecvTimeoutError::Timeout) => poll(engine, shared),
+            Err(RecvTimeoutError::Timeout) => {
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    poll(engine, shared);
+                }));
+            }
             Err(RecvTimeoutError::Disconnected) => return,
         }
     }
