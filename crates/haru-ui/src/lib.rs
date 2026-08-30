@@ -367,7 +367,14 @@ impl Browser {
     fn sidebar(&mut self, ui: &mut egui::Ui) {
         ui.add_space(8.0);
         ui.heading("haru");
-        ui.label(RichText::new("Wallpaper Engine Workshop").small().weak());
+        ui.label(
+            RichText::new(format!(
+                "Wallpaper Engine Workshop · {}",
+                env!("CARGO_PKG_VERSION")
+            ))
+            .small()
+            .weak(),
+        );
         ui.add_space(10.0);
 
         self.search_box(ui);

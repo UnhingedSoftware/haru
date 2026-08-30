@@ -105,10 +105,9 @@ fn work(say: &std::sync::mpsc::Sender<Word>, missing: bool, updating: bool) {
             Err(why) => said.push(format!("could not check the renderer: {why}")),
         }
     }
-    match update::haru_update() {
-        Ok(Some(build)) => said.push(take(say, &build, true)),
-        Ok(None) => {}
-        Err(why) => said.push(format!("could not check haru: {why}")),
+    // A repository with no release yet is not a fault worth reporting.
+    if let Ok(Some(build)) = update::haru_update() {
+        said.push(take(say, &build, true));
     }
 
     let note = if said.is_empty() {

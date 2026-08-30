@@ -186,7 +186,10 @@ pub fn latest_from(repository: &str, asset: &str) -> Result<Build, String> {
         .set("Accept", "application/vnd.github+json")
         .timeout(DEADLINE)
         .call()
-        .map_err(|error| format!("could not reach GitHub ({error})"))?
+        .map_err(|error| match error {
+            ureq::Error::Status(404, _) => "no release published yet".to_owned(),
+            other => format!("could not reach GitHub ({other})"),
+        })?
         .into_string()
         .map_err(|error| format!("could not read the release ({error})"))?;
 

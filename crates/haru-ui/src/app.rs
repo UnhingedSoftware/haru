@@ -621,6 +621,14 @@ impl Haru {
                     }
                     ui.add_space(6.0);
                     ui.label(RichText::new("haru").size(17.0).strong());
+                    ui.label(
+                        RichText::new(env!("CARGO_PKG_VERSION"))
+                            .small()
+                            .color(crate::theme::MUTED),
+                    )
+                    .on_hover_text(
+                        "Settings lists this, the renderer's version and where both live.",
+                    );
                     ui.add_space(14.0);
 
                     for tab in [Tab::Library, Tab::Workshop, Tab::Preview, Tab::Settings] {

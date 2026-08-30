@@ -41,8 +41,42 @@ pub struct Actions {
     pub renderer: Option<Renderer>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Category {
+    #[default]
+    Account,
+    Renderer,
+    Wallpaper,
+    Installing,
+    Browsing,
+    About,
+}
+
+impl Category {
+    const ALL: [Self; 6] = [
+        Self::Account,
+        Self::Renderer,
+        Self::Wallpaper,
+        Self::Installing,
+        Self::Browsing,
+        Self::About,
+    ];
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Account => "Account",
+            Self::Renderer => "Renderer",
+            Self::Wallpaper => "Wallpaper",
+            Self::Installing => "Installing",
+            Self::Browsing => "Browsing",
+            Self::About => "Versions and files",
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Settings {
+    chosen: Category,
     update_note: String,
     renderer_seen: Option<(std::path::PathBuf, String)>,
     pending_tune: bool,
@@ -90,32 +124,65 @@ impl Settings {
         egui::CentralPanel::default()
             .frame(theme::panel_frame(theme::Side::Middle))
             .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.add_space(6.0);
-                        ui.heading("Settings");
-                        ui.add_space(14.0);
+                ui.add_space(6.0);
+                ui.heading("Settings");
+                ui.add_space(12.0);
 
-                        self.steam(ui, signed_in, client, &mut actions);
-                        ui.add_space(18.0);
-                        self.renderer(ui, config, &engine.snapshot(), &mut actions);
-                        ui.add_space(18.0);
-                        self.wallpaper(ui, config, &mut actions);
-                        ui.add_space(18.0);
-                        self.installing(ui, config, &mut actions);
-                        ui.add_space(18.0);
-                        self.libraries(ui, config, &mut actions);
-                        ui.add_space(18.0);
-                        Self::browsing(ui, config, &mut actions);
-                        ui.add_space(18.0);
-                        self.about(ui, config, engine, &mut actions);
-                        ui.add_space(18.0);
-                        self.saving(ui, config);
+                ui.horizontal_top(|ui| {
+                    self.categories(ui);
+                    ui.add_space(14.0);
+                    ui.separator();
+                    ui.add_space(14.0);
+
+                    ui.vertical(|ui| {
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                match self.chosen {
+                                    Category::Account => {
+                                        self.steam(ui, signed_in, client, &mut actions);
+                                    }
+                                    Category::Renderer => {
+                                        self.renderer(ui, config, &engine.snapshot(), &mut actions);
+                                    }
+                                    Category::Wallpaper => self.wallpaper(ui, config, &mut actions),
+                                    Category::Installing => {
+                                        self.installing(ui, config, &mut actions);
+                                        ui.add_space(18.0);
+                                        self.libraries(ui, config, &mut actions);
+                                    }
+                                    Category::Browsing => Self::browsing(ui, config, &mut actions),
+                                    Category::About => {
+                                        self.about(ui, config, engine, &mut actions);
+                                    }
+                                }
+                                ui.add_space(18.0);
+                                self.saving(ui, config);
+                            });
                     });
+                });
             });
 
         actions
+    }
+
+    fn categories(&mut self, ui: &mut egui::Ui) {
+        ui.vertical(|ui| {
+            ui.set_width(160.0);
+            for category in Category::ALL {
+                let chosen = self.chosen == category;
+                if ui
+                    .add_sized(
+                        [ui.available_width(), 28.0],
+                        egui::SelectableLabel::new(chosen, category.label()),
+                    )
+                    .clicked()
+                {
+                    self.chosen = category;
+                }
+                ui.add_space(2.0);
+            }
+        });
     }
 
     fn steam(
