@@ -58,18 +58,20 @@ impl Backend for Relaunch {
     }
 
     fn screens(&self) -> Result<Vec<Screen>, String> {
-        if let Some(live) = self.speaking()
-            && let Ok(screens) = live.screens()
-            && !screens.is_empty()
-        {
-            return Ok(screens);
-        }
-        let current = self
-            .showing
-            .lock()
-            .ok()
-            .and_then(|showing| showing.clone())
-            .filter(|_| launch::running());
+        // One desktop, one name. kirie names its screens after the display, but
+        // letting both names through means two keys for one wallpaper, and a
+        // launch that passes a --bg for each.
+        let live = self
+            .speaking()
+            .and_then(|live| live.screens().ok())
+            .and_then(|screens| screens.into_iter().find_map(|screen| screen.current));
+        let current = live.or_else(|| {
+            self.showing
+                .lock()
+                .ok()
+                .and_then(|showing| showing.clone())
+                .filter(|_| launch::running())
+        });
         Ok(vec![Screen {
             name: DESKTOP.to_owned(),
             current,

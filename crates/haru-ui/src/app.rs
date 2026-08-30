@@ -427,6 +427,19 @@ impl Haru {
 
     fn current_plan(&self) -> Vec<haru_apply::launch::Plan> {
         let seen = self.engine.snapshot();
+        if !cfg!(target_os = "linux") {
+            return seen
+                .screens
+                .into_iter()
+                .filter_map(|found| {
+                    let wallpaper = found.current?;
+                    wallpaper
+                        .is_dir()
+                        .then(|| haru_apply::launch::Plan::showing(found.name, wallpaper))
+                })
+                .take(1)
+                .collect();
+        }
         seen.screens
             .into_iter()
             .filter_map(|found| {
@@ -441,6 +454,9 @@ impl Haru {
     }
 
     fn plan_for(&self, screen: &str, dir: &std::path::Path) -> Vec<haru_apply::launch::Plan> {
+        if !cfg!(target_os = "linux") {
+            return vec![haru_apply::launch::Plan::showing(screen, dir)];
+        }
         let mut names: Vec<String> = Vec::new();
         let mut showing: Vec<(String, std::path::PathBuf)> = Vec::new();
 

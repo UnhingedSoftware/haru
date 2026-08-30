@@ -116,6 +116,9 @@ impl Renderer {
         if self.fps > 0 {
             out.push(format!("--fps={}", self.fps));
         }
+        if self.battery_fps > 0 {
+            out.push(format!("--battery-fps={}", self.battery_fps));
+        }
         if self.render_scale != 1.0 {
             out.push(format!("--render-scale={}", self.render_scale));
         }
@@ -190,6 +193,11 @@ mod tests {
         assert_eq!(renderer.battery_fps, 30);
         assert!(renderer.arguments().contains(&"--scaling=fill".to_owned()));
         assert!(renderer.arguments().contains(&"--fps=30".to_owned()));
+        assert!(
+            renderer
+                .arguments()
+                .contains(&"--battery-fps=30".to_owned())
+        );
     }
 
     #[test]
