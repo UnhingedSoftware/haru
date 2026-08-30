@@ -1,6 +1,6 @@
 [package]
 name = "haru"
-description = "A wallpaper picker and Workshop browser"
+description = "Live wallpapers on Linux and macOS: browse, install and run Wallpaper Engine Workshop wallpapers without Steam"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

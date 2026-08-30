@@ -2,8 +2,8 @@
 Type=Application
 Version=1.0
 Name=haru
-GenericName=Wallpaper Picker
-Comment=Browse the Wallpaper Engine Workshop and put wallpapers up
+GenericName=Live Wallpapers
+Comment=Animated and interactive wallpapers from the Wallpaper Engine Workshop
 Exec=haru
 TryExec=haru
 Icon=haru
@@ -11,7 +11,7 @@ Terminal=false
 StartupNotify=true
 StartupWMClass=haru
 Categories=Graphics;Viewer;
-Keywords=wallpaper;workshop;steam;kirie;background;desktop;
+Keywords=wallpaper;wallpapers;live wallpaper;animated wallpaper;video wallpaper;wallpaper engine;workshop;steam;kirie;background;desktop;screensaver;
 
 Actions=Library;Workshop;Settings;
 

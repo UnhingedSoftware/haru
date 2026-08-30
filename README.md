@@ -1,7 +1,14 @@
 # haru
 
-A wallpaper picker and Workshop browser for Wallpaper Engine content — on
-Linux, Windows and macOS, **without the Steam client running**.
+**Live wallpapers on Linux and macOS.** Browse the Wallpaper Engine Steam
+Workshop, install what you like, and put it on your desktop — animated scenes,
+looping video and interactive web wallpapers — with no Steam client running and
+no Wallpaper Engine installed.
+
+haru draws them through [kirie](https://github.com/UnhingedSoftware/kirie),
+which it fetches for you the first time you apply one. Browsing and installing
+work anywhere haru builds; putting a wallpaper up needs kirie, which supports
+Linux (Wayland and X11) and macOS.
 
 貼る — "to put up".
 
@@ -23,6 +30,9 @@ it, editable live. Nothing on your screens moves.
 
 ## What it does
 
+- **Live wallpapers** — scenes, video and web wallpapers on your desktop,
+  behind your icons, on every screen. Sizing, frame rate, volume, parallax and
+  each wallpaper's own properties are yours to change while it runs.
 - **Workshop** — search 3.1M items with Steam's own filters: tag groups, sort
   and period, content labels, date windows, numbered pages or endless scroll.
 - **Library** — what is installed, what is on each screen, apply, delete, and
