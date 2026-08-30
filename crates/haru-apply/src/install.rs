@@ -270,7 +270,12 @@ pub fn fetch(
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "download".to_owned());
-    let staged = parent.join(format!("{name}.{}.part", std::process::id()));
+    // Unique per download, not per process: haru can be fetching the renderer
+    // for an update and for a first install at the same time, and one renaming
+    // its file away leaves the other with nothing to rename.
+    static ORDINAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let ordinal = ORDINAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let staged = parent.join(format!("{name}.{}.{ordinal}.part", std::process::id()));
     let outcome = write(response, build, &staged, progress);
     match outcome {
         Ok(()) => {

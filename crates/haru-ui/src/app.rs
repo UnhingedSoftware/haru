@@ -118,7 +118,10 @@ impl Haru {
         }
 
         let mut installer = crate::renderer::Installer::new();
+        // With updates on, the renderer is fetched without asking; offering the
+        // same download in a dialog would race it.
         if config.offer_renderer
+            && !config.auto_update
             && haru_apply::install::supported()
             && haru_apply::install::installed().is_none()
         {
@@ -342,7 +345,7 @@ impl Haru {
         if asked.sign_in {
             self.account.open();
         }
-        if asked.install {
+        if asked.install && !self.updates.busy() {
             self.installer.offer();
         }
         if asked.fetch_assets && self.assets_request.is_none() {
@@ -505,6 +508,11 @@ impl Haru {
 
     fn start_renderer(&mut self, screen: &str, dir: &std::path::Path) {
         if self.engine.snapshot().binary.is_none() {
+            if self.updates.busy() {
+                self.library
+                    .say("fetching the renderer — try again in a moment");
+                return;
+            }
             self.library.say("no renderer installed yet");
             self.installer.offer();
             return;
