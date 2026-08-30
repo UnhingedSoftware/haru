@@ -185,6 +185,7 @@ impl Haru {
         if let Some((screen, dir)) = self.library.take_applied() {
             self.config.screens.insert(screen, dir);
             let _ = self.config.save();
+            self.refresh_startup();
         }
         self.engine_notes(ctx);
 
@@ -353,9 +354,17 @@ impl Haru {
         if asked.sign_out {
             self.sign_out_request = Some(self.workshop.send(Request::SignOut));
         }
+        if let Some(on) = asked.startup {
+            self.settings.note(if on {
+                self.register_startup()
+            } else {
+                haru_apply::startup::disable().err()
+            });
+        }
         if asked.tune {
             let _ = self.config.save();
             self.engine.tune(self.config.renderer.live_commands());
+            self.refresh_startup();
         }
         if asked.relaunch && haru_apply::launch::running() {
             let plan = self.current_plan();
@@ -374,6 +383,34 @@ impl Haru {
             self.browser.set_install_root(self.config.install_root());
             self.scanned = false;
         }
+    }
+
+    fn refresh_startup(&self) {
+        if haru_apply::startup::enabled() {
+            let _ = self.register_startup();
+        }
+    }
+
+    fn register_startup(&self) -> Option<String> {
+        let binary = haru_apply::install::installed()?;
+        let socket = self
+            .config
+            .socket
+            .clone()
+            .unwrap_or_else(haru_apply::default_socket);
+        let plan = self.current_plan();
+        if plan.is_empty() {
+            return Some("put a wallpaper up first, then it can be restored at login".to_owned());
+        }
+
+        let mut command = vec![binary.to_string_lossy().into_owned()];
+        command.extend(haru_apply::launch::arguments_for(&socket, &plan));
+        let environment: Vec<(String, String)> = haru_apply::renderer_env()
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value.to_string_lossy().into_owned()))
+            .collect();
+
+        haru_apply::startup::enable(&command, &environment).err()
     }
 
     fn current_plan(&self) -> Vec<haru_apply::launch::Plan> {

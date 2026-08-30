@@ -36,6 +36,7 @@ pub struct Actions {
     pub fetch_assets: bool,
     pub tune: bool,
     pub relaunch: bool,
+    pub startup: Option<bool>,
     pub renderer: Option<Renderer>,
 }
 
@@ -51,6 +52,10 @@ pub struct Settings {
 }
 
 impl Settings {
+    pub fn note(&mut self, why: Option<String>) {
+        self.status = why.unwrap_or_else(|| "saved".to_owned());
+    }
+
     pub fn sync(&mut self, config: &Config) {
         self.socket = config
             .socket
@@ -187,6 +192,28 @@ impl Settings {
         ui.add_space(8.0);
     }
 
+    fn at_login(ui: &mut egui::Ui, actions: &mut Actions) {
+        let mut on = haru_apply::startup::enabled();
+        if ui
+            .checkbox(&mut on, "Put the wallpaper up at login")
+            .on_hover_text(if cfg!(target_os = "macos") {
+                "Registers a launch agent that starts the renderer when you log in."
+            } else {
+                "Registers a user service that starts the renderer with your session."
+            })
+            .changed()
+        {
+            actions.startup = Some(on);
+        }
+        if on && let Some(path) = haru_apply::startup::entry() {
+            ui.label(
+                RichText::new(path.to_string_lossy().into_owned())
+                    .small()
+                    .color(theme::MUTED),
+            );
+        }
+    }
+
     fn renderer(
         &mut self,
         ui: &mut egui::Ui,
@@ -197,6 +224,9 @@ impl Settings {
         ui.label(RichText::new("Renderer").strong());
         ui.add_space(4.0);
         Self::engine_assets(ui, actions, self.assets_note.clone());
+        ui.add_space(6.0);
+        Self::at_login(ui, actions);
+        ui.add_space(6.0);
 
         match (engine.available, engine.pid) {
             (true, _) => Self::running(ui, engine, actions),

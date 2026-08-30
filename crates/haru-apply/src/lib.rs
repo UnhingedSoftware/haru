@@ -6,12 +6,18 @@ mod kirie;
 pub mod launch;
 mod offscreen;
 mod relaunch;
+pub mod startup;
 mod stream;
 
 pub use engine::{Engine, Snapshot};
 pub use kirie::Kirie;
 pub use offscreen::Offscreen;
 pub use relaunch::Relaunch;
+
+#[must_use]
+pub fn default_socket() -> PathBuf {
+    kirie::default_socket()
+}
 pub use stream::{Frame, Preview as PreviewStream};
 
 #[derive(Debug, Clone, PartialEq, Eq)]

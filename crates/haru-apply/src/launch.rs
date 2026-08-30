@@ -108,6 +108,21 @@ impl Plan {
     }
 }
 
+#[must_use]
+pub fn arguments_for(socket: &Path, plan: &[Plan]) -> Vec<String> {
+    let mut arguments = vec![format!("--control-socket={}", socket.display())];
+    arguments.extend(haru_core::Config::load().renderer.arguments());
+    for screen in plan {
+        if cfg!(target_os = "linux") {
+            arguments.push(format!("--screen-root={}", screen.screen));
+        }
+        if let Some(wallpaper) = screen.wallpaper.as_ref() {
+            arguments.push(format!("--bg={}", wallpaper.display()));
+        }
+    }
+    arguments
+}
+
 pub fn start(binary: &Path, socket: &Path, plan: &[Plan]) -> Result<(), String> {
     if running() {
         return Err("a renderer is already running".to_owned());
@@ -122,16 +137,7 @@ pub fn start(binary: &Path, socket: &Path, plan: &[Plan]) -> Result<(), String> 
         return Err(format!("no renderer at {}", binary.display()));
     }
 
-    let mut arguments = vec![format!("--control-socket={}", socket.display())];
-    arguments.extend(haru_core::Config::load().renderer.arguments());
-    for screen in plan {
-        if cfg!(target_os = "linux") {
-            arguments.push(format!("--screen-root={}", screen.screen));
-        }
-        if let Some(wallpaper) = screen.wallpaper.as_ref() {
-            arguments.push(format!("--bg={}", wallpaper.display()));
-        }
-    }
+    let arguments = arguments_for(socket, plan);
 
     spawn_detached(binary, &arguments)?;
     if cfg!(target_os = "linux") {
@@ -249,7 +255,7 @@ fn spawn_detached(binary: &Path, arguments: &[String]) -> Result<(), String> {
         .map_err(|error| format!("could not start the renderer ({error})"))
 }
 
-fn which(program: &str) -> Option<PathBuf> {
+pub(crate) fn which(program: &str) -> Option<PathBuf> {
     let paths = std::env::var_os("PATH")?;
     std::env::split_paths(&paths)
         .map(|directory| directory.join(program))
