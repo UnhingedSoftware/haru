@@ -42,6 +42,8 @@ impl Tab {
     }
 }
 
+const MARK: &[u8] = include_bytes!("../../../packaging/haru-256.png");
+
 pub struct Haru {
     tab: Tab,
     previews: Previews,
@@ -66,6 +68,7 @@ pub struct Haru {
     assets_wait_account: bool,
     asked_who: bool,
     sidebar: bool,
+    mark: Option<egui::TextureHandle>,
 }
 
 impl Default for Haru {
@@ -138,6 +141,7 @@ impl Haru {
             engine,
             scanned: false,
             sidebar: true,
+            mark: None,
             account: Account::new(),
             installer,
             updates: crate::updates::Updates::default(),
@@ -655,16 +659,23 @@ impl Haru {
         self.previews.sweep();
     }
 
-    fn brand(ui: &mut egui::Ui) {
+    fn brand(&mut self, ui: &mut egui::Ui) {
         let (rect, response) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
-        theme::gradient(ui, rect, 9.0, theme::ACCENT, theme::BLOSSOM);
-        ui.painter().text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            "h",
-            egui::FontId::proportional(17.0),
-            egui::Color32::WHITE,
-        );
+        match self.mark(ui.ctx()) {
+            Some(mark) => {
+                egui::Image::new(&mark).paint_at(ui, rect);
+            }
+            None => {
+                theme::gradient(ui, rect, 9.0, theme::ACCENT, theme::BLOSSOM);
+                ui.painter().text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "h",
+                    egui::FontId::proportional(17.0),
+                    egui::Color32::WHITE,
+                );
+            }
+        }
         response.on_hover_text("haru");
 
         ui.add_space(8.0);
@@ -678,6 +689,16 @@ impl Haru {
                     .color(theme::MUTED),
             );
         });
+    }
+
+    fn mark(&mut self, ctx: &egui::Context) -> Option<egui::TextureHandle> {
+        if self.mark.is_none() {
+            let decoded = image::load_from_memory(MARK).ok()?.into_rgba8();
+            let size = [decoded.width() as usize, decoded.height() as usize];
+            let colours = egui::ColorImage::from_rgba_unmultiplied(size, decoded.as_raw());
+            self.mark = Some(ctx.load_texture("haru-mark", colours, egui::TextureOptions::LINEAR));
+        }
+        self.mark.clone()
     }
 
     fn tab_button(ui: &mut egui::Ui, tab: Tab, chosen: bool) -> bool {
@@ -731,7 +752,7 @@ impl Haru {
                         self.sidebar = !self.sidebar;
                     }
                     ui.add_space(8.0);
-                    Self::brand(ui);
+                    self.brand(ui);
                     ui.add_space(16.0);
 
                     for tab in [Tab::Library, Tab::Workshop, Tab::Preview, Tab::Settings] {
