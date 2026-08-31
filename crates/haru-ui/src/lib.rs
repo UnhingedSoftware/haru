@@ -495,7 +495,6 @@ impl Browser {
         ui.horizontal_wrapped(|ui| {
             for (group, tag) in &picked {
                 if theme::chip(ui, &format!("{tag}  ✕"), true)
-                    .interact(egui::Sense::click())
                     .on_hover_text("Stop filtering by this")
                     .clicked()
                 {

@@ -55,6 +55,7 @@ pub struct Library {
     applied: Option<(String, PathBuf)>,
     pending: Option<(String, PathBuf)>,
     previewing: Option<Installed>,
+    kind: Option<String>,
 }
 
 impl Library {
@@ -87,6 +88,7 @@ impl Library {
             applied: None,
             pending: None,
             previewing: None,
+            kind: None,
             confirming: None,
             settings: crate::props::Panel::default(),
             workshop,
@@ -236,6 +238,31 @@ impl Library {
                 .hint_text("Title or type")
                 .desired_width(f32::INFINITY),
         );
+
+        let counts = self.counts();
+        if counts.len() > 1 {
+            ui.add_space(8.0);
+            ui.label(RichText::new("Kind").size(11.0).color(theme::MUTED));
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                if theme::chip(
+                    ui,
+                    &format!("All {}", self.items.len()),
+                    self.kind.is_none(),
+                )
+                .clicked()
+                {
+                    self.kind = None;
+                }
+                for (kind, count) in &counts {
+                    let on = self.kind.as_deref() == Some(kind.as_str());
+                    if theme::chip(ui, &format!("{kind} {count}"), on).clicked() {
+                        self.kind = (!on).then(|| kind.clone());
+                    }
+                }
+            });
+        }
 
         ui.add_space(8.0);
         ui.label(RichText::new("Order").size(11.0).color(theme::MUTED));
@@ -549,6 +576,18 @@ impl Library {
         self.status = format!("applying to {screen}\u{2026}");
     }
 
+    fn counts(&self) -> Vec<(String, usize)> {
+        let mut counts: Vec<(String, usize)> = Vec::new();
+        for item in &self.items {
+            match counts.iter_mut().find(|(kind, _)| *kind == item.kind) {
+                Some((_, seen)) => *seen += 1,
+                None => counts.push((item.kind.clone(), 1)),
+            }
+        }
+        counts.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+        counts
+    }
+
     fn shown(&self) -> Vec<(usize, Installed)> {
         let needle = self.filter.trim().to_lowercase();
         let mut shown: Vec<(usize, Installed)> = self
@@ -557,9 +596,10 @@ impl Library {
             .cloned()
             .enumerate()
             .filter(|(_, item)| {
-                needle.is_empty()
-                    || item.title.to_lowercase().contains(&needle)
-                    || item.kind.contains(&needle)
+                self.kind.as_deref().is_none_or(|kind| item.kind == kind)
+                    && (needle.is_empty()
+                        || item.title.to_lowercase().contains(&needle)
+                        || item.kind.contains(&needle))
             })
             .collect();
 
@@ -675,6 +715,24 @@ mod tests {
             ],
             ..Library::new(std::rc::Rc::new(Workshop::spawn()))
         }
+    }
+
+    #[test]
+    fn a_chosen_kind_narrows_the_grid_and_is_counted() {
+        let mut library = library();
+
+        assert_eq!(
+            library.counts(),
+            vec![("scene".to_owned(), 2), ("video".to_owned(), 1)]
+        );
+
+        library.kind = Some("video".to_owned());
+        let shown = library.shown();
+        assert_eq!(shown.len(), 1);
+        assert_eq!(
+            shown.first().map(|(_, item)| item.title.clone()),
+            Some("Rain".to_owned())
+        );
     }
 
     #[test]

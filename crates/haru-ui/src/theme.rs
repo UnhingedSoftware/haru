@@ -185,14 +185,20 @@ pub fn chip(ui: &mut egui::Ui, text: &str, on: bool) -> egui::Response {
     } else {
         (SURFACE, MUTED)
     };
-    egui::Frame::none()
-        .fill(fill)
-        .rounding(Rounding::same(999.0))
-        .inner_margin(egui::Margin::symmetric(10.0, 4.0))
-        .show(ui, |ui| {
-            ui.label(egui::RichText::new(text).size(11.0).color(ink));
-        })
-        .response
+    let galley =
+        ui.painter()
+            .layout_no_wrap(text.to_owned(), egui::FontId::proportional(11.0), ink);
+    let (rect, response) =
+        ui.allocate_exact_size(galley.size() + Vec2::new(20.0, 9.0), egui::Sense::click());
+    let hot = response.hovered() && !on;
+    ui.painter().rect_filled(
+        rect,
+        Rounding::same(999.0),
+        if hot { fill.gamma_multiply(1.6) } else { fill },
+    );
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, ink);
+    response
 }
 
 pub fn primary(ui: &mut egui::Ui, text: &str) -> egui::Response {
