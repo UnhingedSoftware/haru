@@ -68,6 +68,7 @@ pub struct Haru {
     assets_wait_account: bool,
     asked_who: bool,
     sidebar: bool,
+    help: bool,
     mark: Option<egui::TextureHandle>,
 }
 
@@ -141,6 +142,7 @@ impl Haru {
             engine,
             scanned: false,
             sidebar: true,
+            help: false,
             mark: None,
             account: Account::new(),
             installer,
@@ -210,9 +212,42 @@ impl Haru {
 
         self.overlays(ctx);
 
+        self.keys(ctx);
         self.toasts.ui(ctx);
         self.shortcuts(ctx);
         self.finish_frame();
+    }
+
+    fn keys(&mut self, ctx: &egui::Context) {
+        if !self.help {
+            return;
+        }
+        let mut open = true;
+        egui::Window::new("Keys")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .frame(theme::card(14.0).inner_margin(egui::Margin::symmetric(20.0, 16.0)))
+            .show(ctx, |ui| {
+                ui.set_min_width(260.0);
+                for (key, what) in [
+                    ("/", "Search the Workshop"),
+                    ("Esc", "Close the open wallpaper"),
+                    ("1 - 4", "Library, Workshop, Preview, Settings"),
+                    ("?", "This list"),
+                ] {
+                    ui.horizontal(|ui| {
+                        ui.add_sized(
+                            [56.0, 20.0],
+                            egui::Label::new(RichText::new(key).size(12.0).color(theme::ACCENT)),
+                        );
+                        ui.label(RichText::new(what).size(12.0).color(theme::MUTED));
+                    });
+                    ui.add_space(4.0);
+                }
+            });
+        self.help = open;
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
@@ -222,9 +257,19 @@ impl Haru {
 
         ctx.input(|input| {
             if input.key_pressed(egui::Key::Escape) {
-                self.browser.deselect();
+                if self.help {
+                    self.help = false;
+                } else {
+                    self.browser.deselect();
+                }
             }
-            if input.key_pressed(egui::Key::Slash) {
+            if input.key_pressed(egui::Key::Questionmark) {
+                self.help = !self.help;
+            }
+            if input.key_pressed(egui::Key::Slash) && input.modifiers.shift {
+                self.help = !self.help;
+            }
+            if input.key_pressed(egui::Key::Slash) && !input.modifiers.shift {
                 self.browser.focus_search();
                 self.tab = Tab::Workshop;
             }
@@ -765,6 +810,14 @@ impl Haru {
                     }
 
                     self.screen_picker(ui);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if theme::chip(ui, "?", self.help)
+                            .on_hover_text("Keys worth knowing")
+                            .clicked()
+                        {
+                            self.help = !self.help;
+                        }
+                    });
                 });
             });
     }
