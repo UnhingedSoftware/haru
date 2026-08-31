@@ -512,14 +512,18 @@ impl Browser {
         false
     }
 
-    fn download_row(&mut self, ui: &mut egui::Ui, found: &BrowseResult, engine: &Engine) {
-        let id = found.item.id.get();
-        let on_disk = self.installed.contains(&id)
+    fn on_disk(&self, id: u64) -> bool {
+        self.installed.contains(&id)
             || self.install_root.as_ref().is_some_and(|root| {
                 root.join(format!("steamapps/workshop/content/431960/{id}"))
                     .join("project.json")
                     .is_file()
-            });
+            })
+    }
+
+    fn download_row(&mut self, ui: &mut egui::Ui, found: &BrowseResult) {
+        let id = found.item.id.get();
+        let on_disk = self.on_disk(id);
 
         if self.subscribing == Some(id) {
             ui.horizontal(|ui| {
@@ -579,10 +583,6 @@ impl Browser {
                             .color(theme::MUTED),
                     );
                 });
-                if let Some(dir) = self.item_dir(id) {
-                    ui.add_space(10.0);
-                    self.settings_for(ui, &id.to_string(), &dir, engine);
-                }
             }
             None => {
                 if theme::primary(ui, "Download").clicked() {
@@ -926,7 +926,7 @@ impl Browser {
                 Self::facts(ui, &found);
                 ui.add_space(10.0);
 
-                self.download_row(ui, &found, engine);
+                self.download_row(ui, &found);
 
                 ui.add_space(12.0);
                 Self::numbers(ui, &found);
@@ -937,6 +937,24 @@ impl Browser {
                     ui.separator();
                     ui.add_space(6.0);
                     ui.label(RichText::new(description).size(12.0).color(theme::MUTED));
+                }
+
+                let id = found.item.id.get();
+                if self.on_disk(id)
+                    && let Some(dir) = self.item_dir(id)
+                {
+                    ui.add_space(12.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+                    egui::CollapsingHeader::new(
+                        RichText::new("Its own settings")
+                            .size(12.0)
+                            .color(theme::TEXT),
+                    )
+                    .id_salt("item-settings")
+                    .show(ui, |ui| {
+                        self.settings_for(ui, &id.to_string(), &dir, engine);
+                    });
                 }
             });
     }
