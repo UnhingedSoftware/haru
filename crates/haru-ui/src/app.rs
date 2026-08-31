@@ -203,7 +203,7 @@ impl Haru {
             let _ = self.config.save();
             self.refresh_startup();
         }
-        self.updates.tick(self.config.auto_update);
+        self.updates.tick(self.config.auto_update, self.config.beta);
         if let Some(news) = self.updates.take_news() {
             self.toasts.say(news.clone());
             self.library.say(&news);

@@ -46,13 +46,17 @@ pub fn newer(offered: &str, running: &str) -> bool {
     offered > running
 }
 
-pub fn haru_update() -> Result<Option<Build>, String> {
-    let build = install::latest_from(HARU, &haru_asset())?;
+pub fn haru_update(betas: bool) -> Result<Option<Build>, String> {
+    let build = install::newest_from(HARU, &haru_asset(), betas)?;
     Ok(newer(&build.tag, env!("CARGO_PKG_VERSION")).then_some(build))
 }
 
-pub fn renderer_update(binary: &Path) -> Result<Option<Build>, String> {
-    let build = install::latest(install::Web::suggested())?;
+pub fn renderer_update(binary: &Path, betas: bool) -> Result<Option<Build>, String> {
+    let build = if betas {
+        install::latest_including_betas(install::Web::suggested())?
+    } else {
+        install::latest(install::Web::suggested())?
+    };
     let running = install::version_of(binary).unwrap_or_default();
     Ok(newer(&build.tag, &running).then_some(build))
 }

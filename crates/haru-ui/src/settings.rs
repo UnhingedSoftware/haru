@@ -743,6 +743,12 @@ impl Settings {
             )
             .on_hover_text("Fetches the renderer when it is missing, and newer releases of both.")
             .changed();
+        ui.add_enabled_ui(config.auto_update, |ui| {
+            actions.changed |= ui
+                .checkbox(&mut config.beta, "Take beta releases too")
+                .on_hover_text("Pre-releases land first here. They are newer, and rougher.")
+                .changed();
+        });
         ui.add_space(8.0);
 
         let mine = std::env::current_exe().ok();

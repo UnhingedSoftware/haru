@@ -18,6 +18,8 @@ pub struct Config {
     pub infinite_scroll: bool,
     pub renderer: crate::renderer::Renderer,
     pub auto_update: bool,
+    #[serde(default)]
+    pub beta: bool,
 }
 
 impl Default for Config {
@@ -35,6 +37,7 @@ impl Default for Config {
             infinite_scroll: false,
             renderer: crate::renderer::Renderer::default(),
             auto_update: true,
+            beta: false,
         }
     }
 }

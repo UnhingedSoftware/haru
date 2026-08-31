@@ -58,7 +58,7 @@ impl Updates {
         self.renderer_ready = None;
     }
 
-    pub fn tick(&mut self, wanted: bool) {
+    pub fn tick(&mut self, wanted: bool, betas: bool) {
         self.collect();
         if self.busy() || !due_now(std::time::Instant::now(), self.due) {
             return;
@@ -84,7 +84,7 @@ impl Updates {
 
         let started = std::thread::Builder::new()
             .name("haru-updates".to_owned())
-            .spawn(move || work(&say, missing, wanted));
+            .spawn(move || work(&say, missing, wanted, betas));
         if started.is_err() {
             self.working = None;
             self.note = "could not start the update thread".to_owned();
@@ -120,9 +120,14 @@ impl Updates {
     }
 }
 
-fn work(say: &std::sync::mpsc::Sender<Word>, missing: bool, updating: bool) {
+fn work(say: &std::sync::mpsc::Sender<Word>, missing: bool, updating: bool, betas: bool) {
     if missing {
-        let note = match install::latest(install::Web::suggested()) {
+        let wanted = if betas {
+            install::latest_including_betas(install::Web::suggested())
+        } else {
+            install::latest(install::Web::suggested())
+        };
+        let note = match wanted {
             Ok(build) => take(say, &build, false),
             Err(why) => format!("could not reach the renderer's releases: {why}"),
         };
@@ -136,13 +141,13 @@ fn work(say: &std::sync::mpsc::Sender<Word>, missing: bool, updating: bool) {
 
     let mut said: Vec<String> = Vec::new();
     if let Some(binary) = install::installed() {
-        match update::renderer_update(&binary) {
+        match update::renderer_update(&binary, betas) {
             Ok(Some(build)) => said.push(take(say, &build, false)),
             Ok(None) => {}
             Err(why) => said.push(format!("could not check the renderer: {why}")),
         }
     }
-    if let Ok(Some(build)) = update::haru_update() {
+    if let Ok(Some(build)) = update::haru_update(betas) {
         said.push(take(say, &build, true));
     }
 

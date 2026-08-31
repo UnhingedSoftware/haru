@@ -178,9 +178,48 @@ pub fn latest(web: Web) -> Result<Build, String> {
     latest_from(REPOSITORY, &web.asset())
 }
 
+pub fn latest_including_betas(web: Web) -> Result<Build, String> {
+    newest_from(REPOSITORY, &web.asset(), true)
+}
+
 pub fn latest_from(repository: &str, asset: &str) -> Result<Build, String> {
+    newest_from(repository, asset, false)
+}
+
+#[must_use]
+pub fn newest_release(releases: &[serde_json::Value], betas: bool) -> Option<&serde_json::Value> {
+    releases.iter().find(|release| {
+        let draft = release
+            .get("draft")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let pre = release
+            .get("prerelease")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        !draft && (betas || !pre)
+    })
+}
+
+pub fn newest_from(repository: &str, asset: &str, betas: bool) -> Result<Build, String> {
+    if betas {
+        let url = format!("https://api.github.com/repos/{repository}/releases?per_page=20");
+        let body = read_json(&url)?;
+        let releases: Vec<serde_json::Value> = serde_json::from_str(&body)
+            .map_err(|error| format!("unreadable releases ({error})"))?;
+        let release = newest_release(&releases, true).ok_or("no release published yet")?;
+        return build_from(release, asset);
+    }
     let url = format!("https://api.github.com/repos/{repository}/releases/latest");
-    let body = ureq::get(&url)
+    let body = read_json(&url)?;
+
+    let release: serde_json::Value =
+        serde_json::from_str(&body).map_err(|error| format!("unreadable release ({error})"))?;
+    build_from(&release, asset)
+}
+
+fn read_json(url: &str) -> Result<String, String> {
+    ureq::get(url)
         .set("User-Agent", AGENT)
         .set("Accept", "application/vnd.github+json")
         .timeout(DEADLINE)
@@ -190,18 +229,17 @@ pub fn latest_from(repository: &str, asset: &str) -> Result<Build, String> {
             other => format!("could not reach GitHub ({other})"),
         })?
         .into_string()
-        .map_err(|error| format!("could not read the release ({error})"))?;
+        .map_err(|error| format!("could not read the release ({error})"))
+}
 
-    let release: serde_json::Value =
-        serde_json::from_str(&body).map_err(|error| format!("unreadable release ({error})"))?;
-
+fn build_from(release: &serde_json::Value, asset: &str) -> Result<Build, String> {
     let tag = release
         .get("tag_name")
         .and_then(serde_json::Value::as_str)
         .ok_or("the release has no tag")?
         .to_owned();
 
-    let (url, sha256, size) = asset_in(&release, &tag, asset)?;
+    let (url, sha256, size) = asset_in(release, &tag, asset)?;
 
     Ok(Build {
         tag,
@@ -352,6 +390,41 @@ fn hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    fn release(tag: &str, draft: bool, prerelease: bool) -> serde_json::Value {
+        serde_json::json!({ "tag_name": tag, "draft": draft, "prerelease": prerelease })
+    }
+
+    #[test]
+    fn the_stable_channel_skips_pre_releases() {
+        let list = [
+            release("v0.4.0-beta.1", false, true),
+            release("v0.3.0", false, false),
+        ];
+        let tag = newest_release(&list, false).map(|release| release["tag_name"].clone());
+        assert_eq!(tag, Some(serde_json::json!("v0.3.0")));
+    }
+
+    #[test]
+    fn the_beta_channel_takes_the_newest_of_either() {
+        let list = [
+            release("v0.4.0-beta.1", false, true),
+            release("v0.3.0", false, false),
+        ];
+        let tag = newest_release(&list, true).map(|release| release["tag_name"].clone());
+        assert_eq!(tag, Some(serde_json::json!("v0.4.0-beta.1")));
+    }
+
+    #[test]
+    fn drafts_are_never_offered() {
+        let list = [
+            release("v0.5.0", true, false),
+            release("v0.4.0-beta.1", false, true),
+        ];
+        let tag = newest_release(&list, true).map(|release| release["tag_name"].clone());
+        assert_eq!(tag, Some(serde_json::json!("v0.4.0-beta.1")));
+        assert!(newest_release(&list, false).is_none());
+    }
     use super::*;
 
     #[test]
