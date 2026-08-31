@@ -15,6 +15,7 @@ pub enum Kind {
         options: Vec<(String, String)>,
     },
     Text(String),
+    Caption,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,6 +44,7 @@ impl Property {
                 }
             }
             Kind::Text(text) => *text = raw.to_owned(),
+            Kind::Caption => {}
         }
     }
 
@@ -54,6 +56,7 @@ impl Property {
             Kind::Color([r, g, b]) => format!("{r} {g} {b}"),
             Kind::Combo { value, .. } => value.clone(),
             Kind::Text(text) => text.clone(),
+            Kind::Caption => String::new(),
         }
     }
 }
@@ -133,6 +136,7 @@ fn property(key: &str, raw: &serde_json::Value) -> Option<Property> {
                 })
                 .unwrap_or_default(),
         },
+        "group" => Kind::Caption,
         _ => Kind::Text(value.map(scalar_to_string).unwrap_or_default()),
     };
 
@@ -255,6 +259,23 @@ mod tests {
             Some("b".to_owned()),
             "a combo sends its value, not its label"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_group_reads_as_a_heading_with_no_value() {
+        let dir = write(
+            r#"{"general":{"properties":{
+                "scene":{"type":"group","text":"Scene","order":0},
+                "bloom":{"type":"bool","value":true,"order":1,"text":"Bloom"}
+            }}}"#,
+        );
+        let found = read(&dir);
+        assert_eq!(found.len(), 2);
+        let Some(first) = found.first() else { return };
+        assert_eq!(first.kind, Kind::Caption);
+        assert_eq!(first.label, "Scene");
+        assert!(first.wire().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

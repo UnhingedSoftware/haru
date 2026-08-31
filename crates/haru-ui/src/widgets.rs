@@ -12,7 +12,11 @@ pub fn property(ui: &mut egui::Ui, property: &mut Property) -> bool {
             max,
             step,
         } => {
-            ui.label(RichText::new(&property.label).size(12.0));
+            ui.label(
+                RichText::new(&property.label)
+                    .size(12.0)
+                    .color(crate::theme::MUTED),
+            );
             ui.add(
                 egui::Slider::new(value, *min..=*max)
                     .step_by(*step)
@@ -21,11 +25,19 @@ pub fn property(ui: &mut egui::Ui, property: &mut Property) -> bool {
             .drag_stopped()
         }
         Kind::Color(rgb) => {
-            ui.label(RichText::new(&property.label).size(12.0));
+            ui.label(
+                RichText::new(&property.label)
+                    .size(12.0)
+                    .color(crate::theme::MUTED),
+            );
             ui.color_edit_button_rgb(rgb).changed()
         }
         Kind::Combo { value, options } => {
-            ui.label(RichText::new(&property.label).size(12.0));
+            ui.label(
+                RichText::new(&property.label)
+                    .size(12.0)
+                    .color(crate::theme::MUTED),
+            );
             let shown = options
                 .iter()
                 .find(|(_, option)| option == value)
@@ -41,8 +53,23 @@ pub fn property(ui: &mut egui::Ui, property: &mut Property) -> bool {
                 });
             picked
         }
+        Kind::Caption => {
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(&property.label)
+                    .size(11.0)
+                    .strong()
+                    .color(crate::theme::ACCENT),
+            );
+            ui.add_space(2.0);
+            false
+        }
         Kind::Text(text) => {
-            ui.label(RichText::new(&property.label).size(12.0));
+            ui.label(
+                RichText::new(&property.label)
+                    .size(12.0)
+                    .color(crate::theme::MUTED),
+            );
             ui.add(egui::TextEdit::singleline(text).desired_width(f32::INFINITY))
                 .lost_focus()
         }
