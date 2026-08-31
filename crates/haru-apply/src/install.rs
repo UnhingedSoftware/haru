@@ -186,6 +186,49 @@ pub fn latest_from(repository: &str, asset: &str) -> Result<Build, String> {
     newest_from(repository, asset, false)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Card {
+    pub value: String,
+    pub label: String,
+}
+
+#[must_use]
+pub fn cards_from(text: &str) -> Vec<Card> {
+    let Ok(list) = serde_json::from_str::<Vec<serde_json::Value>>(text) else {
+        return Vec::new();
+    };
+    list.iter()
+        .filter_map(|entry| {
+            let value = entry.get("value").and_then(serde_json::Value::as_str)?;
+            let label = entry
+                .get("label")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(value);
+            Some(Card {
+                value: value.to_owned(),
+                label: label.to_owned(),
+            })
+        })
+        .collect()
+}
+
+#[must_use]
+pub fn graphics_cards() -> Vec<Card> {
+    let Some(binary) = installed() else {
+        return Vec::new();
+    };
+    let Ok(out) = std::process::Command::new(binary)
+        .args(["gpus", "--json"])
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !out.status.success() {
+        return Vec::new();
+    }
+    cards_from(&String::from_utf8_lossy(&out.stdout))
+}
+
 #[must_use]
 pub fn newest_release(releases: &[serde_json::Value], betas: bool) -> Option<&serde_json::Value> {
     releases.iter().find(|release| {
@@ -390,6 +433,40 @@ fn hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_renderers_own_list_names_real_cards() {
+        let text = r#"[{"icd":null,"kind":"auto","label":"Automatic (no pinning)","value":"auto"},
+            {"icd":"/usr/share/vulkan/icd.d/nvidia_icd.json","kind":"discrete","label":"NVIDIA GeForce RTX 4080 (discrete)","value":"nvidia"}]"#;
+        let cards = cards_from(text);
+        assert_eq!(cards.len(), 2);
+        let named = cards
+            .last()
+            .map(|card| (card.value.clone(), card.label.clone()));
+        assert_eq!(
+            named,
+            Some((
+                "nvidia".to_owned(),
+                "NVIDIA GeForce RTX 4080 (discrete)".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_card_without_a_label_falls_back_to_its_value() {
+        let cards = cards_from(r#"[{"value":"radv"}]"#);
+        assert_eq!(cards.len(), 1);
+        assert_eq!(
+            cards.first().map(|card| card.label.clone()),
+            Some("radv".to_owned())
+        );
+    }
+
+    #[test]
+    fn nonsense_lists_nothing() {
+        assert!(cards_from("not json").is_empty());
+        assert!(cards_from("{}").is_empty());
+    }
 
     fn release(tag: &str, draft: bool, prerelease: bool) -> serde_json::Value {
         serde_json::json!({ "tag_name": tag, "draft": draft, "prerelease": prerelease })

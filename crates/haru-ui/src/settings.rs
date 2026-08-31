@@ -83,16 +83,16 @@ const GPU_CHOICES: &[(&str, &str)] = &[
 ];
 
 #[must_use]
-fn gpu_label(value: &str) -> &str {
+fn card_label<'a>(cards: &'a [haru_apply::install::Card], value: &'a str) -> &'a str {
     let wanted = if value.trim().is_empty() {
         "auto"
     } else {
         value.trim()
     };
-    GPU_CHOICES
+    cards
         .iter()
-        .find(|(known, _)| known.eq_ignore_ascii_case(wanted))
-        .map_or(value, |(_, label)| *label)
+        .find(|card| card.value.eq_ignore_ascii_case(wanted))
+        .map_or(value, |card| card.label.as_str())
 }
 
 #[derive(Default)]
@@ -107,6 +107,7 @@ pub struct Settings {
     install: String,
     library: String,
     status: String,
+    cards: Option<Vec<haru_apply::install::Card>>,
 }
 
 impl Settings {
@@ -428,18 +429,32 @@ impl Settings {
         }
 
         ui.add_space(8.0);
+        let cards = self.cards.get_or_insert_with(|| {
+            let found = haru_apply::install::graphics_cards();
+            if found.is_empty() {
+                GPU_CHOICES
+                    .iter()
+                    .map(|(value, label)| haru_apply::install::Card {
+                        value: (*value).to_owned(),
+                        label: (*label).to_owned(),
+                    })
+                    .collect()
+            } else {
+                found
+            }
+        });
         ui.horizontal(|ui| {
             ui.label("Graphics card");
-            let chosen = gpu_label(&config.renderer.gpu);
+            let chosen = card_label(cards, &config.renderer.gpu);
             egui::ComboBox::from_id_salt("renderer-gpu")
                 .selected_text(chosen)
-                .width(200.0)
+                .width(260.0)
                 .show_ui(ui, |ui| {
-                    for (value, label) in GPU_CHOICES {
-                        let picked = config.renderer.gpu.eq_ignore_ascii_case(value)
-                            || (config.renderer.gpu.is_empty() && *value == "auto");
-                        if ui.selectable_label(picked, *label).clicked() {
-                            config.renderer.gpu = (*value).to_owned();
+                    for card in cards.iter() {
+                        let picked = config.renderer.gpu.eq_ignore_ascii_case(&card.value)
+                            || (config.renderer.gpu.is_empty() && card.value == "auto");
+                        if ui.selectable_label(picked, &card.label).clicked() {
+                            config.renderer.gpu = card.value.clone();
                             actions.changed = true;
                             actions.relaunch = true;
                         }
@@ -914,23 +929,35 @@ fn path_or_none(raw: &str) -> Option<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
 
+    fn cards() -> Vec<haru_apply::install::Card> {
+        GPU_CHOICES
+            .iter()
+            .map(|(value, label)| haru_apply::install::Card {
+                value: (*value).to_owned(),
+                label: (*label).to_owned(),
+            })
+            .collect()
+    }
+
     #[test]
     fn every_card_choice_has_a_name() {
-        for (value, label) in GPU_CHOICES {
-            assert!(!value.is_empty() && !label.is_empty());
-            assert_eq!(gpu_label(value), *label);
+        let known = cards();
+        for card in &known {
+            assert!(!card.value.is_empty() && !card.label.is_empty());
+            assert_eq!(card_label(&known, &card.value), card.label);
         }
     }
 
     #[test]
     fn an_empty_choice_reads_as_automatic() {
-        assert_eq!(gpu_label(""), "Let the driver choose");
-        assert_eq!(gpu_label("auto"), "Let the driver choose");
+        let known = cards();
+        assert_eq!(card_label(&known, ""), "Let the driver choose");
+        assert_eq!(card_label(&known, "auto"), "Let the driver choose");
     }
 
     #[test]
     fn a_card_we_do_not_list_is_shown_as_typed() {
-        assert_eq!(gpu_label("radv"), "radv");
+        assert_eq!(card_label(&cards(), "radv"), "radv");
     }
     use super::*;
 
