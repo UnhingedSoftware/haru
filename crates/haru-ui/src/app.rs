@@ -40,17 +40,6 @@ impl Tab {
             Self::Settings => "Settings",
         }
     }
-
-    /// The same word in Japanese, shown small under the tab. haru is a tool for
-    /// Japanese-made wallpapers; it may as well say so quietly.
-    const fn kana(self) -> &'static str {
-        match self {
-            Self::Workshop => "こうぼう",
-            Self::Library => "ライブラリ",
-            Self::Preview => "プレビュー",
-            Self::Settings => "せってい",
-        }
-    }
 }
 
 pub struct Haru {
@@ -66,6 +55,7 @@ pub struct Haru {
     account: Account,
     installer: crate::renderer::Installer,
     updates: crate::updates::Updates,
+    toasts: crate::toast::Toasts,
     workshop: Rc<Workshop>,
     who_request: Option<haru_workshop::RequestId>,
     sign_in_request: Option<haru_workshop::RequestId>,
@@ -129,8 +119,6 @@ impl Haru {
         }
 
         let mut installer = crate::renderer::Installer::new();
-        // With updates on, the renderer is fetched without asking; offering the
-        // same download in a dialog would race it.
         if config.offer_renderer
             && !config.auto_update
             && haru_apply::install::supported()
@@ -153,6 +141,7 @@ impl Haru {
             account: Account::new(),
             installer,
             updates: crate::updates::Updates::default(),
+            toasts: crate::toast::Toasts::default(),
             workshop,
             asked_who: false,
             who_request: None,
@@ -210,13 +199,42 @@ impl Haru {
         }
         self.updates.tick(self.config.auto_update);
         if let Some(news) = self.updates.take_news() {
+            self.toasts.say(news.clone());
             self.library.say(&news);
         }
         self.engine_notes(ctx);
 
         self.overlays(ctx);
 
+        self.toasts.ui(ctx);
+        self.shortcuts(ctx);
         self.finish_frame();
+    }
+
+    fn shortcuts(&mut self, ctx: &egui::Context) {
+        if ctx.wants_keyboard_input() && !ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            return;
+        }
+
+        ctx.input(|input| {
+            if input.key_pressed(egui::Key::Escape) {
+                self.browser.deselect();
+            }
+            if input.key_pressed(egui::Key::Slash) {
+                self.browser.focus_search();
+                self.tab = Tab::Workshop;
+            }
+            for (key, tab) in [
+                (egui::Key::Num1, Tab::Library),
+                (egui::Key::Num2, Tab::Workshop),
+                (egui::Key::Num3, Tab::Preview),
+                (egui::Key::Num4, Tab::Settings),
+            ] {
+                if input.key_pressed(key) {
+                    self.tab = tab;
+                }
+            }
+        });
     }
 
     fn screen_picker(&mut self, ui: &mut egui::Ui) {
@@ -575,8 +593,14 @@ impl Haru {
     fn engine_notes(&mut self, ctx: &egui::Context) {
         while let Some(note) = self.engine.take_note() {
             match note {
-                Ok(said) => self.library.say(said),
-                Err(why) => self.library.say(why),
+                Ok(said) => {
+                    self.toasts.say(said.clone());
+                    self.library.say(said);
+                }
+                Err(why) => {
+                    self.toasts.wrong(why.clone());
+                    self.library.say(why);
+                }
             }
         }
         if self.engine.snapshot().working {
@@ -631,18 +655,17 @@ impl Haru {
         self.previews.sweep();
     }
 
-    /// 貼る in a soft gradient, the version beside it.
     fn brand(ui: &mut egui::Ui) {
         let (rect, response) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
         theme::gradient(ui, rect, 9.0, theme::ACCENT, theme::BLOSSOM);
         ui.painter().text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
-            "貼",
-            egui::FontId::proportional(15.0),
+            "h",
+            egui::FontId::proportional(17.0),
             egui::Color32::WHITE,
         );
-        response.on_hover_text("haru — 貼る, to put up");
+        response.on_hover_text("haru");
 
         ui.add_space(8.0);
         ui.vertical(|ui| {
@@ -657,11 +680,10 @@ impl Haru {
         });
     }
 
-    /// A pill that fills in as it is chosen, with the Japanese word beneath.
     fn tab_button(ui: &mut egui::Ui, tab: Tab, chosen: bool) -> bool {
-        let width = 96.0;
+        let width = 92.0;
         let (rect, response) =
-            ui.allocate_exact_size(egui::vec2(width, 34.0), egui::Sense::click());
+            ui.allocate_exact_size(egui::vec2(width, 30.0), egui::Sense::click());
 
         let lit = ui.ctx().animate_bool_with_time(
             egui::Id::new(("tab", tab.label())),
@@ -683,18 +705,11 @@ impl Haru {
 
         let ink = if chosen { theme::TEXT } else { theme::MUTED };
         ui.painter().text(
-            egui::pos2(rect.center().x, rect.center().y - 5.0),
+            rect.center(),
             egui::Align2::CENTER_CENTER,
             tab.label(),
-            egui::FontId::proportional(12.5),
+            egui::FontId::proportional(13.0),
             ink,
-        );
-        ui.painter().text(
-            egui::pos2(rect.center().x, rect.center().y + 9.0),
-            egui::Align2::CENTER_CENTER,
-            tab.kana(),
-            egui::FontId::proportional(8.5),
-            ink.gamma_multiply(0.55),
         );
 
         response.clicked()

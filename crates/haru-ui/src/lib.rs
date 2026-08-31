@@ -8,6 +8,7 @@ mod renderer;
 mod settings;
 pub mod theme;
 mod tile;
+mod toast;
 mod updates;
 mod widgets;
 
@@ -70,6 +71,7 @@ pub struct Browser {
     subscribing: Option<u64>,
     landing: Option<(u64, PathBuf, f64)>,
     needs_account: bool,
+    focus_search: bool,
 }
 
 impl Browser {
@@ -123,7 +125,16 @@ impl Browser {
             subscribing: None,
             landing: None,
             needs_account: false,
+            focus_search: false,
         }
+    }
+
+    pub fn deselect(&mut self) {
+        self.selected = None;
+    }
+
+    pub fn focus_search(&mut self) {
+        self.focus_search = true;
     }
 
     pub fn take_needs_account(&mut self) -> bool {
@@ -407,8 +418,6 @@ impl Browser {
         }
     }
 
-    /// Sort, period and what the search found — above the grid, where the eye
-    /// lands before it reaches the pictures.
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         let mut changed = false;
         let total = self.page.as_ref().map_or(0, |page| page.total);
@@ -469,7 +478,6 @@ impl Browser {
         }
     }
 
-    /// Every tag currently narrowing the search, each one droppable on its own.
     fn chosen_pills(&mut self, ui: &mut egui::Ui) -> bool {
         let picked: Vec<(usize, String)> = self
             .filters
@@ -717,9 +725,12 @@ impl Browser {
     fn search_box(&mut self, ui: &mut egui::Ui) {
         let search = ui.add(
             egui::TextEdit::singleline(&mut self.typed)
-                .hint_text("Search, then Enter")
+                .hint_text("Search, then Enter   /")
                 .desired_width(f32::INFINITY),
         );
+        if std::mem::take(&mut self.focus_search) {
+            search.request_focus();
+        }
         if search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             self.filters.text = self.typed.clone();
             self.search();
@@ -807,10 +818,6 @@ impl Browser {
 
         let (columns, tile_width) = tile::columns_for(ui.available_width(), TILE, 8.0);
 
-        // The page is sized to the window, not to the grid: the detail pane
-        // takes width from the grid, and a page that shrank when a wallpaper
-        // was opened would search again and throw away the thing being looked
-        // at.
         let whole = ui.available_width() + if self.selected.is_some() { DETAIL } else { 0.0 };
         let (across, wide) = tile::columns_for(whole, TILE, 8.0);
         let rows = tile::rows_for(ui.available_height(), wide, 10.0);
@@ -886,7 +893,6 @@ impl Browser {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                // Picture first: it is what the choice is actually made on.
                 if let Some(url) = found.preview_url.as_deref()
                     && let Some(texture) = previews.texture(ui.ctx(), url)
                 {
@@ -936,8 +942,6 @@ impl Browser {
             });
     }
 
-    /// What kind of wallpaper this is, said in chips rather than a tag soup:
-    /// type and resolution first, then anything worth knowing before it runs.
     fn facts(ui: &mut egui::Ui, found: &BrowseResult) {
         const TELLING: [&str; 6] = [
             "Audio responsive",
@@ -1015,8 +1019,6 @@ impl Browser {
                     ui.label(RichText::new(why).color(ui.visuals().error_fg_color));
                 }
                 Status::Idle => {
-                    // The count lives in the toolbar now; down here only say
-                    // what is still happening.
                     if previews.loading() > 0 {
                         ui.label(
                             RichText::new(format!("{} previews loading", previews.loading()))
