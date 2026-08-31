@@ -11,6 +11,26 @@ pub const ASPECT: f32 = 0.60;
 
 const FILL: f32 = 0.65;
 
+#[must_use]
+pub fn cover_uv(slot: Vec2, image: Vec2) -> egui::Rect {
+    let whole = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    if slot.x <= 0.0 || slot.y <= 0.0 || image.x <= 0.0 || image.y <= 0.0 {
+        return whole;
+    }
+    let want = slot.x / slot.y;
+    let have = image.x / image.y;
+    if (want - have).abs() < 0.002 {
+        return whole;
+    }
+    if have > want {
+        let edge = (1.0 - want / have) / 2.0;
+        egui::Rect::from_min_max(egui::pos2(edge, 0.0), egui::pos2(1.0 - edge, 1.0))
+    } else {
+        let edge = (1.0 - have / want) / 2.0;
+        egui::Rect::from_min_max(egui::pos2(0.0, edge), egui::pos2(1.0, 1.0 - edge))
+    }
+}
+
 pub fn columns_for(available: f32, min_tile: f32, spacing: f32) -> (usize, f32) {
     const MAX_TILE: f32 = 420.0;
 
@@ -75,8 +95,7 @@ pub fn show(
                     Some(texture) => {
                         egui::Image::new(&texture)
                             .rounding(rounding)
-                            .maintain_aspect_ratio(true)
-                            .fit_to_exact_size(rect.size())
+                            .uv(cover_uv(rect.size(), texture.size_vec2()))
                             .paint_at(ui, rect);
                     }
                     None => shimmer(ui, rect, rounding),
@@ -300,5 +319,36 @@ mod tests {
         let (columns, width) = columns_for(50.0, 168.0, 8.0);
         assert_eq!(columns, 1);
         assert!(width >= 168.0, "a tile never shrinks below its minimum");
+    }
+
+    #[test]
+    fn a_matching_picture_is_never_cropped() {
+        let uv = cover_uv(Vec2::new(300.0, 180.0), Vec2::new(1000.0, 600.0));
+        assert_eq!(uv.min.x, 0.0);
+        assert_eq!(uv.max.y, 1.0);
+    }
+
+    #[test]
+    fn a_wide_picture_loses_its_sides_not_its_shape() {
+        let uv = cover_uv(Vec2::new(300.0, 180.0), Vec2::new(2000.0, 600.0));
+        assert!(uv.min.x > 0.0 && uv.max.x < 1.0, "{uv:?}");
+        assert_eq!((uv.min.y, uv.max.y), (0.0, 1.0));
+        assert!((uv.min.x - (1.0 - uv.max.x)).abs() < 0.001);
+    }
+
+    #[test]
+    fn a_tall_picture_loses_its_top_and_bottom() {
+        let uv = cover_uv(Vec2::new(300.0, 180.0), Vec2::new(600.0, 800.0));
+        assert!(uv.min.y > 0.0 && uv.max.y < 1.0, "{uv:?}");
+        assert_eq!((uv.min.x, uv.max.x), (0.0, 1.0));
+    }
+
+    #[test]
+    fn a_picture_with_no_size_is_drawn_whole() {
+        let uv = cover_uv(Vec2::new(300.0, 180.0), Vec2::ZERO);
+        assert_eq!(
+            uv,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0))
+        );
     }
 }

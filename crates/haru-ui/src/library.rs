@@ -611,8 +611,7 @@ fn tile(
                 Some(texture) => {
                     egui::Image::new(&texture)
                         .rounding(rounding)
-                        .maintain_aspect_ratio(true)
-                        .fit_to_exact_size(rect.size())
+                        .uv(crate::tile::cover_uv(rect.size(), texture.size_vec2()))
                         .paint_at(ui, rect);
                 }
                 None => crate::tile::shimmer(ui, rect, rounding),
