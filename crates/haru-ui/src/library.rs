@@ -593,8 +593,12 @@ fn tile(
             ui.set_min_width(size);
             ui.set_max_width(size);
 
-            let (rect, response) = ui.allocate_exact_size(Vec2::new(size, height), Sense::click());
-            let rounding = Rounding::same(10.0);
+            let (slot, response) = ui.allocate_exact_size(Vec2::new(size, height), Sense::click());
+            let lift =
+                ui.ctx()
+                    .animate_bool_with_time(response.id, response.hovered() || selected, 0.12);
+            let rect = slot.expand(lift * 4.0);
+            let rounding = Rounding::same(12.0);
             ui.painter().rect_filled(rect, rounding, theme::CARD);
 
             let picture = ui.is_rect_visible(rect).then(|| {
@@ -611,15 +615,7 @@ fn tile(
                         .fit_to_exact_size(rect.size())
                         .paint_at(ui, rect);
                 }
-                None => {
-                    ui.painter().text(
-                        rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "…",
-                        egui::FontId::proportional(18.0),
-                        theme::MUTED,
-                    );
-                }
+                None => crate::tile::shimmer(ui, rect, rounding),
             }
 
             crate::tile::caption_for(
@@ -631,14 +627,17 @@ fn tile(
                 theme::ACCENT,
             );
 
-            let edge = if selected {
-                Stroke::new(2.0_f32, theme::ACCENT)
+            if selected {
+                theme::glow(ui, rect, 12.0, theme::ACCENT, 1.0);
             } else if on_screen {
-                Stroke::new(1.5_f32, theme::ACCENT.gamma_multiply(0.7))
-            } else if response.hovered() {
-                Stroke::new(1.0_f32, theme::ACCENT.gamma_multiply(0.5))
+                theme::glow(ui, rect, 12.0, theme::ACCENT, 0.6);
+            } else if lift > 0.01 {
+                theme::glow(ui, rect, 12.0, theme::BLOSSOM, lift * 0.7);
+            }
+            let edge = if selected || on_screen {
+                Stroke::new(2.0_f32, theme::ACCENT)
             } else {
-                Stroke::new(1.0_f32, theme::HAIRLINE)
+                Stroke::new(1.0_f32, theme::HAIRLINE.gamma_multiply(1.0 - lift))
             };
             ui.painter().rect_stroke(rect, rounding, edge);
 

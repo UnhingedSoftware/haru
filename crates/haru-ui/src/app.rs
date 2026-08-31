@@ -40,6 +40,17 @@ impl Tab {
             Self::Settings => "Settings",
         }
     }
+
+    /// The same word in Japanese, shown small under the tab. haru is a tool for
+    /// Japanese-made wallpapers; it may as well say so quietly.
+    const fn kana(self) -> &'static str {
+        match self {
+            Self::Workshop => "こうぼう",
+            Self::Library => "ライブラリ",
+            Self::Preview => "プレビュー",
+            Self::Settings => "せってい",
+        }
+    }
 }
 
 pub struct Haru {
@@ -620,6 +631,75 @@ impl Haru {
         self.previews.sweep();
     }
 
+    /// 貼る in a soft gradient, the version beside it.
+    fn brand(ui: &mut egui::Ui) {
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
+        theme::gradient(ui, rect, 9.0, theme::ACCENT, theme::BLOSSOM);
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "貼",
+            egui::FontId::proportional(15.0),
+            egui::Color32::WHITE,
+        );
+        response.on_hover_text("haru — 貼る, to put up");
+
+        ui.add_space(8.0);
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            ui.add_space(1.0);
+            ui.label(RichText::new("haru").size(16.0).strong());
+            ui.label(
+                RichText::new(env!("CARGO_PKG_VERSION"))
+                    .size(9.5)
+                    .color(theme::MUTED),
+            );
+        });
+    }
+
+    /// A pill that fills in as it is chosen, with the Japanese word beneath.
+    fn tab_button(ui: &mut egui::Ui, tab: Tab, chosen: bool) -> bool {
+        let width = 96.0;
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(width, 34.0), egui::Sense::click());
+
+        let lit = ui.ctx().animate_bool_with_time(
+            egui::Id::new(("tab", tab.label())),
+            chosen || response.hovered(),
+            0.12,
+        );
+        if lit > 0.01 {
+            let fill = if chosen {
+                theme::ACCENT.gamma_multiply(0.20 + 0.55 * lit)
+            } else {
+                theme::CARD.gamma_multiply(lit)
+            };
+            ui.painter()
+                .rect_filled(rect, egui::Rounding::same(9.0), fill);
+        }
+        if chosen {
+            theme::glow(ui, rect, 9.0, theme::ACCENT, 0.8);
+        }
+
+        let ink = if chosen { theme::TEXT } else { theme::MUTED };
+        ui.painter().text(
+            egui::pos2(rect.center().x, rect.center().y - 5.0),
+            egui::Align2::CENTER_CENTER,
+            tab.label(),
+            egui::FontId::proportional(12.5),
+            ink,
+        );
+        ui.painter().text(
+            egui::pos2(rect.center().x, rect.center().y + 9.0),
+            egui::Align2::CENTER_CENTER,
+            tab.kana(),
+            egui::FontId::proportional(8.5),
+            ink.gamma_multiply(0.55),
+        );
+
+        response.clicked()
+    }
+
     fn tabs(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("tabs")
             .frame(theme::panel_frame(theme::Side::Left))
@@ -635,31 +715,12 @@ impl Haru {
                     {
                         self.sidebar = !self.sidebar;
                     }
-                    ui.add_space(6.0);
-                    ui.label(RichText::new("haru").size(17.0).strong());
-                    ui.label(
-                        RichText::new(env!("CARGO_PKG_VERSION"))
-                            .small()
-                            .color(crate::theme::MUTED),
-                    )
-                    .on_hover_text(
-                        "Settings lists this, the renderer's version and where both live.",
-                    );
-                    ui.add_space(14.0);
+                    ui.add_space(8.0);
+                    Self::brand(ui);
+                    ui.add_space(16.0);
 
                     for tab in [Tab::Library, Tab::Workshop, Tab::Preview, Tab::Settings] {
-                        let chosen = self.tab == tab;
-                        if ui
-                            .selectable_label(
-                                chosen,
-                                RichText::new(tab.label()).size(13.0).color(if chosen {
-                                    theme::TEXT
-                                } else {
-                                    theme::MUTED
-                                }),
-                            )
-                            .clicked()
-                        {
+                        if Self::tab_button(ui, tab, self.tab == tab) {
                             self.tab = tab;
                             if tab == Tab::Library {
                                 self.scanned = false;

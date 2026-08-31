@@ -53,9 +53,17 @@ pub fn show(
                 ui.set_min_width(size);
                 ui.set_max_width(size);
 
-                let (rect, response) =
+                let (slot, response) =
                     ui.allocate_exact_size(Vec2::new(size, height), Sense::click());
-                let rounding = Rounding::same(10.0);
+
+                // A tile lifts a little when pointed at, the way a card does.
+                let lift = ui.ctx().animate_bool_with_time(
+                    response.id,
+                    response.hovered() || selected,
+                    0.12,
+                );
+                let rect = slot.expand(lift * 4.0);
+                let rounding = Rounding::same(12.0);
                 ui.painter().rect_filled(rect, rounding, theme::CARD);
 
                 let picture = ui.is_rect_visible(rect).then(|| {
@@ -73,25 +81,20 @@ pub fn show(
                             .fit_to_exact_size(rect.size())
                             .paint_at(ui, rect);
                     }
-                    None => {
-                        ui.painter().text(
-                            rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            "…",
-                            egui::FontId::proportional(18.0),
-                            ui.visuals().weak_text_color(),
-                        );
-                    }
+                    None => shimmer(ui, rect, rounding),
                 }
 
                 caption(ui, rect, &title, found);
 
+                if selected {
+                    theme::glow(ui, rect, 12.0, theme::ACCENT, 1.0);
+                } else if lift > 0.01 {
+                    theme::glow(ui, rect, 12.0, theme::BLOSSOM, lift * 0.7);
+                }
                 let edge = if selected {
                     Stroke::new(2.0_f32, theme::ACCENT)
-                } else if response.hovered() {
-                    Stroke::new(1.0_f32, theme::ACCENT.gamma_multiply(0.5))
                 } else {
-                    Stroke::new(1.0_f32, theme::HAIRLINE)
+                    Stroke::new(1.0_f32, theme::HAIRLINE.gamma_multiply(1.0 - lift))
                 };
                 ui.painter().rect_stroke(rect, rounding, edge);
 
@@ -165,6 +168,46 @@ fn one_line(
     job.wrap.break_anywhere = true;
     job.wrap.overflow_character = Some('…');
     ui.fonts(|fonts| fonts.layout_job(job))
+}
+
+/// While a picture is on its way, a slow sheen across the empty tile — quieter
+/// than a spinner and it keeps the grid's shape.
+pub fn shimmer(ui: &egui::Ui, rect: egui::Rect, rounding: Rounding) {
+    use egui::epaint::{Mesh, Vertex};
+
+    ui.painter().rect_filled(rect, rounding, theme::CARD);
+
+    let time = ui.input(|input| input.time) as f32;
+    let sweep = (time * 0.6).sin() * 0.5 + 0.5;
+    let centre = rect.left() + rect.width() * sweep;
+    let half = rect.width() * 0.22;
+
+    let mut mesh = Mesh::default();
+    let sheen = theme::ACCENT.gamma_multiply(0.10);
+    let clear = Color32::TRANSPARENT;
+    for (x, colour) in [
+        (centre - half, clear),
+        (centre, sheen),
+        (centre + half, clear),
+    ] {
+        let x = x.clamp(rect.left(), rect.right());
+        mesh.vertices.push(Vertex {
+            pos: egui::pos2(x, rect.top()),
+            uv: egui::epaint::WHITE_UV,
+            color: colour,
+        });
+        mesh.vertices.push(Vertex {
+            pos: egui::pos2(x, rect.bottom()),
+            uv: egui::epaint::WHITE_UV,
+            color: colour,
+        });
+    }
+    mesh.indices
+        .extend_from_slice(&[0, 1, 3, 0, 3, 2, 2, 3, 5, 2, 5, 4]);
+    ui.painter().add(egui::Shape::mesh(mesh));
+
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_millis(60));
 }
 
 fn fade(ui: &egui::Ui, band: egui::Rect) {

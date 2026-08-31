@@ -1,12 +1,16 @@
 use egui::{Color32, Rounding, Stroke, Vec2};
 
-pub const ACCENT: Color32 = Color32::from_rgb(0x7C, 0x5C, 0xFF);
+pub const ACCENT: Color32 = Color32::from_rgb(0x8B, 0x5C, 0xF6);
 
-pub const ACCENT_SOFT: Color32 = Color32::from_rgb(0x24, 0x1E, 0x45);
+/// The second half of the pair: sakura against the violet. Used for warmth —
+/// hearts, the brand mark, a highlight that should feel soft rather than loud.
+pub const BLOSSOM: Color32 = Color32::from_rgb(0xFF, 0x6F, 0xA5);
+
+pub const ACCENT_SOFT: Color32 = Color32::from_rgb(0x27, 0x1F, 0x4A);
 
 pub const DANGER: Color32 = Color32::from_rgb(0xE5, 0x6B, 0x6F);
 
-pub const LOVE: Color32 = Color32::from_rgb(0xF2, 0x55, 0x7A);
+pub const LOVE: Color32 = BLOSSOM;
 
 pub const TEXT: Color32 = Color32::from_rgb(0xE8, 0xE8, 0xF0);
 
@@ -87,7 +91,7 @@ pub fn apply(ctx: &egui::Context) {
     visuals.selection.bg_fill = ACCENT.gamma_multiply(0.45);
     visuals.selection.stroke = Stroke::new(1.0_f32, ACCENT);
 
-    let rounding = Rounding::same(9.0);
+    let rounding = Rounding::same(11.0);
     visuals.widgets.noninteractive.rounding = rounding;
     visuals.widgets.noninteractive.bg_fill = SURFACE;
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, HAIRLINE);
@@ -124,7 +128,7 @@ pub fn apply(ctx: &egui::Context) {
 
     style.spacing.item_spacing = Vec2::new(8.0, 9.0);
     style.spacing.text_edit_width = 200.0;
-    style.spacing.button_padding = Vec2::new(12.0, 7.0);
+    style.spacing.button_padding = Vec2::new(13.0, 7.0);
     style.spacing.menu_margin = egui::Margin::same(6.0);
     style.spacing.window_margin = egui::Margin::same(10.0);
     style.spacing.scroll.bar_width = 8.0;
@@ -141,6 +145,46 @@ pub fn card(rounding: f32) -> egui::Frame {
         .stroke(Stroke::new(1.0_f32, HAIRLINE))
 }
 
+/// Two colours blended left to right — the brand mark and anything that wants
+/// to feel like more than a flat rectangle.
+pub fn gradient(ui: &egui::Ui, rect: egui::Rect, rounding: f32, from: Color32, to: Color32) {
+    use egui::epaint::{Mesh, Vertex};
+
+    let mut mesh = Mesh::default();
+    for (at, colour) in [
+        (rect.left_top(), from),
+        (rect.right_top(), to),
+        (rect.right_bottom(), to),
+        (rect.left_bottom(), from),
+    ] {
+        mesh.vertices.push(Vertex {
+            pos: at,
+            uv: egui::epaint::WHITE_UV,
+            color: colour,
+        });
+    }
+    mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
+
+    ui.painter()
+        .rect_filled(rect, Rounding::same(rounding), from);
+    ui.painter().add(egui::Shape::mesh(mesh));
+    ui.painter()
+        .rect_filled(rect, Rounding::same(rounding), Color32::TRANSPARENT);
+}
+
+/// A soft ring outside a shape rather than a hard line on it.
+pub fn glow(ui: &egui::Ui, rect: egui::Rect, rounding: f32, colour: Color32, strength: f32) {
+    for step in 1..=3 {
+        let spread = step as f32 * 2.0;
+        let fade = (strength * (0.30 / step as f32)).clamp(0.0, 1.0);
+        ui.painter().rect_stroke(
+            rect.expand(spread),
+            Rounding::same(rounding + spread),
+            Stroke::new(1.5_f32, colour.gamma_multiply(fade)),
+        );
+    }
+}
+
 /// A small rounded label: a tag, a resolution, "Audio responsive".
 pub fn chip(ui: &mut egui::Ui, text: &str, on: bool) -> egui::Response {
     let (fill, ink) = if on {
@@ -150,8 +194,8 @@ pub fn chip(ui: &mut egui::Ui, text: &str, on: bool) -> egui::Response {
     };
     egui::Frame::none()
         .fill(fill)
-        .rounding(Rounding::same(6.0))
-        .inner_margin(egui::Margin::symmetric(8.0, 3.0))
+        .rounding(Rounding::same(999.0))
+        .inner_margin(egui::Margin::symmetric(10.0, 4.0))
         .show(ui, |ui| {
             ui.label(egui::RichText::new(text).size(11.0).color(ink));
         })
