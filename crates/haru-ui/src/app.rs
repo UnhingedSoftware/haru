@@ -288,8 +288,15 @@ impl Haru {
 
     fn screen_picker(&mut self, ui: &mut egui::Ui) {
         let screens = self.library.screens().to_vec();
-        if !screens.is_empty() {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if theme::chip(ui, " ? ", self.help)
+                .on_hover_text("Keys worth knowing")
+                .clicked()
+            {
+                self.help = !self.help;
+            }
+            if !screens.is_empty() {
+                ui.add_space(10.0);
                 let chosen = self
                     .library
                     .target()
@@ -312,8 +319,8 @@ impl Haru {
                             }
                         }
                     });
-            });
-        }
+            }
+        });
     }
 
     fn before_drawing(&mut self, ctx: &egui::Context) {
@@ -810,14 +817,6 @@ impl Haru {
                     }
 
                     self.screen_picker(ui);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if theme::chip(ui, "?", self.help)
-                            .on_hover_text("Keys worth knowing")
-                            .clicked()
-                        {
-                            self.help = !self.help;
-                        }
-                    });
                 });
             });
     }
