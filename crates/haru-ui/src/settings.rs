@@ -761,7 +761,10 @@ impl Settings {
         ui.add_space(6.0);
         for (what, path) in [
             ("wallpapers", haru_core::Config::load().install_root()),
-            ("engine assets", haru_core::engine::assets_home()),
+            (
+                "engine assets",
+                haru_core::engine::found().or_else(haru_core::engine::assets_home),
+            ),
             ("settings", Config::path()),
             (
                 "at login",
