@@ -65,7 +65,7 @@ impl Clamp {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Renderer {
     pub fps: u32,
@@ -85,6 +85,8 @@ pub struct Renderer {
     pub no_fullscreen_pause: bool,
     pub focus_x: f32,
     pub focus_y: f32,
+    #[serde(default)]
+    pub gpu: String,
 }
 
 impl Default for Renderer {
@@ -107,6 +109,7 @@ impl Default for Renderer {
             no_fullscreen_pause: false,
             focus_x: 0.0,
             focus_y: 0.0,
+            gpu: String::new(),
         }
     }
 }
@@ -115,6 +118,10 @@ impl Renderer {
     #[must_use]
     pub fn arguments(&self) -> Vec<String> {
         let mut out = Vec::new();
+        let gpu = self.gpu.trim();
+        if !gpu.is_empty() && !gpu.eq_ignore_ascii_case("auto") {
+            out.push(format!("--gpu={gpu}"));
+        }
         if self.fps > 0 {
             out.push(format!("--fps={}", self.fps));
         }
@@ -190,6 +197,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_named_card_reaches_the_renderer() {
+        let renderer = Renderer {
+            gpu: "nvidia".to_owned(),
+            ..Renderer::default()
+        };
+        assert!(renderer.arguments().iter().any(|arg| arg == "--gpu=nvidia"));
+    }
+
+    #[test]
+    fn letting_the_driver_choose_passes_nothing() {
+        for value in ["", "auto", "  Auto  "] {
+            let renderer = Renderer {
+                gpu: value.to_owned(),
+                ..Renderer::default()
+            };
+            assert!(
+                !renderer
+                    .arguments()
+                    .iter()
+                    .any(|arg| arg.starts_with("--gpu")),
+                "{value:?} should leave the choice alone"
+            );
+        }
+    }
+
+    #[test]
     fn the_default_fills_the_screen_at_thirty_frames() {
         let renderer = Renderer::default();
         assert_eq!(renderer.scaling, Scaling::Fill);
@@ -255,11 +288,14 @@ mod tests {
     #[test]
     fn only_launch_only_settings_ask_for_a_relaunch() {
         let base = Renderer::default();
-        let live = Renderer { fps: 30, ..base };
+        let live = Renderer {
+            fps: 30,
+            ..base.clone()
+        };
         assert!(!base.needs_relaunch(&live));
         let launch = Renderer {
             scaling: Scaling::Fit,
-            ..base
+            ..base.clone()
         };
         assert!(base.needs_relaunch(&launch));
     }
@@ -284,6 +320,7 @@ mod tests {
             no_fullscreen_pause: true,
             focus_x: -0.25,
             focus_y: 0.5,
+            gpu: "nvidia".to_owned(),
         };
         let text = serde_json::to_string(&renderer).unwrap_or_default();
         let back: Renderer = serde_json::from_str(&text).unwrap_or_default();

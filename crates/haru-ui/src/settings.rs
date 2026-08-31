@@ -74,6 +74,27 @@ impl Category {
     }
 }
 
+const GPU_CHOICES: &[(&str, &str)] = &[
+    ("auto", "Let the driver choose"),
+    ("nvidia", "NVIDIA"),
+    ("amd", "AMD"),
+    ("intel", "Intel"),
+    ("software", "Software (slow)"),
+];
+
+#[must_use]
+fn gpu_label(value: &str) -> &str {
+    let wanted = if value.trim().is_empty() {
+        "auto"
+    } else {
+        value.trim()
+    };
+    GPU_CHOICES
+        .iter()
+        .find(|(known, _)| known.eq_ignore_ascii_case(wanted))
+        .map_or(value, |(_, label)| *label)
+}
+
 #[derive(Default)]
 pub struct Settings {
     chosen: Category,
@@ -406,6 +427,30 @@ impl Settings {
             }
         }
 
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.label("Graphics card");
+            let chosen = gpu_label(&config.renderer.gpu);
+            egui::ComboBox::from_id_salt("renderer-gpu")
+                .selected_text(chosen)
+                .width(200.0)
+                .show_ui(ui, |ui| {
+                    for (value, label) in GPU_CHOICES {
+                        let picked = config.renderer.gpu.eq_ignore_ascii_case(value)
+                            || (config.renderer.gpu.is_empty() && *value == "auto");
+                        if ui.selectable_label(picked, *label).clicked() {
+                            config.renderer.gpu = (*value).to_owned();
+                            actions.changed = true;
+                            actions.relaunch = true;
+                        }
+                    }
+                });
+        })
+        .response
+        .on_hover_text(
+            "Pins the renderer to one card by its Vulkan driver. It sticks even when haru is closed.",
+        );
+
         ui.add_space(6.0);
         ui.label(
             RichText::new("Control socket — blank uses $XDG_RUNTIME_DIR/lwe.sock")
@@ -486,7 +531,7 @@ impl Settings {
     fn wallpaper(&mut self, ui: &mut egui::Ui, config: &mut Config, actions: &mut Actions) {
         use haru_core::renderer::{Clamp, Scaling};
 
-        let before = config.renderer;
+        let before = config.renderer.clone();
         theme::heading(ui, "Wallpaper");
         ui.add_space(2.0);
         ui.label(
@@ -868,6 +913,25 @@ fn path_or_none(raw: &str) -> Option<std::path::PathBuf> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn every_card_choice_has_a_name() {
+        for (value, label) in GPU_CHOICES {
+            assert!(!value.is_empty() && !label.is_empty());
+            assert_eq!(gpu_label(value), *label);
+        }
+    }
+
+    #[test]
+    fn an_empty_choice_reads_as_automatic() {
+        assert_eq!(gpu_label(""), "Let the driver choose");
+        assert_eq!(gpu_label("auto"), "Let the driver choose");
+    }
+
+    #[test]
+    fn a_card_we_do_not_list_is_shown_as_typed() {
+        assert_eq!(gpu_label("radv"), "radv");
+    }
     use super::*;
 
     #[test]
