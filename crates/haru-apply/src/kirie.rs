@@ -102,7 +102,11 @@ impl Backend for Kirie {
     }
 
     fn apply(&self, screen: &str, dir: &Path) -> Result<(), String> {
-        let reply = self.ask(&format!("bg {screen} {}", dir.display()))?;
+        let reply = self.ask(&put_up_command(
+            screen,
+            dir,
+            self.screens().map(|s| s.len()).unwrap_or(1),
+        ))?;
         match reply.first().map(|line| line.trim()) {
             Some("ok") => Ok(()),
             Some(said) if said.starts_with("error") => Err(why(said)),
@@ -110,6 +114,14 @@ impl Backend for Kirie {
             None => Err("the renderer stopped answering".to_owned()),
         }
     }
+}
+
+#[must_use]
+pub fn put_up_command(screen: &str, dir: &Path, screens: usize) -> String {
+    if screen.is_empty() || screens <= 1 {
+        return format!("bg {}", dir.display());
+    }
+    format!("bg {screen} {}", dir.display())
 }
 
 fn why(said: &str) -> String {
@@ -130,6 +142,26 @@ pub(crate) fn default_socket() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn one_screen_needs_no_name() {
+        let command = put_up_command("Built-in Retina Display", Path::new("/wall/one"), 1);
+        assert_eq!(command, "bg /wall/one");
+    }
+
+    #[test]
+    fn several_screens_still_name_the_one_to_change() {
+        let command = put_up_command("DP-1", Path::new("/wall/one"), 2);
+        assert_eq!(command, "bg DP-1 /wall/one");
+    }
+
+    #[test]
+    fn no_screen_named_means_every_screen() {
+        assert_eq!(
+            put_up_command("", Path::new("/wall/one"), 3),
+            "bg /wall/one"
+        );
+    }
     #[test]
     fn a_reason_is_shown_when_the_renderer_gives_one() {
         assert_eq!(
