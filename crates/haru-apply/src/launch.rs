@@ -93,9 +93,10 @@ pub struct Plan {
 impl Plan {
     #[must_use]
     pub fn showing(screen: impl Into<String>, wallpaper: impl Into<PathBuf>) -> Self {
+        let wallpaper = wallpaper.into();
         Self {
             screen: screen.into(),
-            wallpaper: Some(wallpaper.into()),
+            wallpaper: (!wallpaper.as_os_str().is_empty()).then_some(wallpaper),
         }
     }
 
@@ -116,7 +117,11 @@ pub fn arguments_for(socket: &Path, plan: &[Plan]) -> Vec<String> {
         if cfg!(target_os = "linux") {
             arguments.push(format!("--screen-root={}", screen.screen));
         }
-        if let Some(wallpaper) = screen.wallpaper.as_ref() {
+        if let Some(wallpaper) = screen
+            .wallpaper
+            .as_ref()
+            .filter(|path| !path.as_os_str().is_empty())
+        {
             arguments.push(format!("--bg={}", wallpaper.display()));
         }
     }
@@ -280,6 +285,25 @@ fn wait_for(socket: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_screen_with_no_wallpaper_named_is_not_shown_one() {
+        let plan = Plan::showing("DP-1", PathBuf::new());
+        assert_eq!(plan.wallpaper, None);
+    }
+
+    #[test]
+    fn an_empty_wallpaper_never_reaches_the_renderer() {
+        let plan = [Plan {
+            screen: "DP-1".to_owned(),
+            wallpaper: Some(PathBuf::new()),
+        }];
+        let args = arguments_for(Path::new("/run/lwe.sock"), &plan);
+        assert!(
+            !args.iter().any(|arg| arg.starts_with("--bg")),
+            "{args:?} must not carry an empty background"
+        );
+    }
 
     #[cfg(not(target_os = "linux"))]
     #[test]
