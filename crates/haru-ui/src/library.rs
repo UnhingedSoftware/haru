@@ -248,9 +248,7 @@ impl Library {
         ui.add_space(10.0);
 
         ui.label(RichText::new("Filter").size(11.0).color(theme::MUTED));
-        ui.add(
-            theme::field(&mut self.filter, "Title or type"),
-        );
+        ui.add(theme::field(&mut self.filter, "Title or type"));
 
         let counts = self.counts();
         if counts.len() > 1 {
@@ -700,7 +698,7 @@ fn tile(
 }
 
 fn open(target: &std::path::Path) {
-    let _ = std::process::Command::new("xdg-open").arg(target).spawn();
+    haru_apply::open_link(&target.to_string_lossy());
 }
 
 #[cfg(test)]

@@ -69,6 +69,16 @@ pub fn take_haru(build: &Build, progress: &mut dyn FnMut(u64, u64)) -> Result<Pa
     install::fetch(build, &running, progress)
 }
 
+pub fn relaunch_self() -> Result<(), String> {
+    let running = std::env::current_exe().map_err(|error| format!("{error}"))?;
+    let arguments: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    std::process::Command::new(running)
+        .args(arguments)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("{error}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

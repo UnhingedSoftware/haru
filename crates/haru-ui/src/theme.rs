@@ -211,9 +211,9 @@ pub fn field<'a>(text: &'a mut String, hint: &str) -> egui::TextEdit<'a> {
 }
 
 pub fn dismiss_chip(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    let label = ui
-        .painter()
-        .layout_no_wrap(text.to_owned(), egui::FontId::proportional(11.0), ACCENT);
+    let label =
+        ui.painter()
+            .layout_no_wrap(text.to_owned(), egui::FontId::proportional(11.0), ACCENT);
     let mark = ui.painter().layout_no_wrap(
         crate::icons::Icon::Close.glyph().to_string(),
         egui::FontId::new(11.0, egui::FontFamily::Name(ICONS.into())),
@@ -233,8 +233,11 @@ pub fn dismiss_chip(ui: &mut egui::Ui, text: &str) -> egui::Response {
     ui.painter().rect_filled(rect, Rounding::same(999.0), fill);
     let left = rect.left() + 10.0;
     let middle = rect.center().y;
-    ui.painter()
-        .galley(egui::pos2(left, middle - label.size().y / 2.0), label.clone(), ACCENT);
+    ui.painter().galley(
+        egui::pos2(left, middle - label.size().y / 2.0),
+        label.clone(),
+        ACCENT,
+    );
     ui.painter().galley(
         egui::pos2(left + label.size().x + gap, middle - mark.size().y / 2.0),
         mark,

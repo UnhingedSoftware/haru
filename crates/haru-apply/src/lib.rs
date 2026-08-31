@@ -47,6 +47,24 @@ pub trait Backend: Send + Sync {
     }
 }
 
+pub fn open_link(target: &str) {
+    let (program, first) = if cfg!(target_os = "macos") {
+        ("open", None)
+    } else if cfg!(target_os = "windows") {
+        ("cmd", Some("/C start"))
+    } else {
+        ("xdg-open", None)
+    };
+    let mut command = std::process::Command::new(program);
+    if let Some(first) = first {
+        for part in first.split(' ') {
+            command.arg(part);
+        }
+        command.arg("");
+    }
+    let _ = command.arg(target).spawn();
+}
+
 #[must_use]
 pub fn renderer_env() -> Vec<(&'static str, std::ffi::OsString)> {
     let mut set: Vec<(&'static str, std::ffi::OsString)> = Vec::new();

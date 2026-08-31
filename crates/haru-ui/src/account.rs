@@ -197,7 +197,24 @@ impl Account {
                             .color(theme::MUTED),
                     );
                     ui.add_space(4.0);
-                    ui.hyperlink_to(RichText::new("or open the link").small(), url.clone());
+                    ui.horizontal(|ui| {
+                        let browser = browser_login_url(url);
+                        if ui
+                            .add(egui::Button::new(
+                                RichText::new("Open in a browser").size(11.5),
+                            ))
+                            .on_hover_text("Sign in to Steam there, then approve this request")
+                            .clicked()
+                        {
+                            haru_apply::open_link(&browser);
+                        }
+                        if ui
+                            .add(egui::Button::new(RichText::new("Copy link").size(11.5)))
+                            .clicked()
+                        {
+                            ui.ctx().copy_text(browser);
+                        }
+                    });
                 });
             }
             None => {
@@ -246,15 +263,33 @@ impl Account {
                         )
                         .clicked()
                     {
-                        let _ = std::process::Command::new("xdg-open")
-                            .arg("steam://open/main")
-                            .spawn();
+                        haru_apply::open_link("steam://open/main");
                     }
                 }
             }
         }
         asked
     }
+}
+
+#[must_use]
+pub fn browser_login_url(challenge: &str) -> String {
+    let Some((client, request)) = challenge
+        .rsplit_once("/q/")
+        .and_then(|(_, tail)| tail.split_once('/'))
+    else {
+        return challenge.to_owned();
+    };
+    if client.is_empty()
+        || request.is_empty()
+        || !client.chars().all(|c| c.is_ascii_digit())
+        || !request.chars().all(|c| c.is_ascii_digit())
+    {
+        return challenge.to_owned();
+    }
+    format!(
+        "https://store.steampowered.com/login/?redir=about%2Fqrlogin%2F{client}%2F{request}&redir_ssl=1"
+    )
 }
 
 fn render(url: &str) -> egui::ColorImage {

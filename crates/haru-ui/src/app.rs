@@ -286,6 +286,42 @@ impl Haru {
         });
     }
 
+    fn restart_prompt(&mut self, ui: &mut egui::Ui) {
+        let (haru_ready, renderer_ready) = self.updates.ready();
+        let waiting = haru_ready.is_some() || renderer_ready.is_some();
+        if !waiting {
+            return;
+        }
+        let mine = haru_ready.is_some();
+        let label = if mine {
+            "Restart for the update"
+        } else {
+            "Restart the renderer"
+        };
+        let note = haru_ready.or(renderer_ready).unwrap_or_default().to_owned();
+
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if theme::chip(ui, label, true).on_hover_text(note).clicked() {
+                if mine {
+                    match haru_apply::update::relaunch_self() {
+                        Ok(()) => {
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        Err(why) => self.toasts.wrong(format!("could not restart: {why}")),
+                    }
+                } else {
+                    let plan = self.current_plan();
+                    if !plan.is_empty() {
+                        self.engine.restart(plan);
+                    }
+                    self.updates.forget_renderer();
+                    self.toasts.say("the renderer is restarting".to_owned());
+                }
+            }
+            ui.add_space(8.0);
+        });
+    }
+
     fn screen_picker(&mut self, ui: &mut egui::Ui) {
         let screens = self.library.screens().to_vec();
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -816,6 +852,7 @@ impl Haru {
                         }
                     }
 
+                    self.restart_prompt(ui);
                     self.screen_picker(ui);
                 });
             });

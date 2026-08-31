@@ -5,15 +5,31 @@ use haru_apply::update;
 
 enum Word {
     Note(String),
+    Landed(Landed),
     Done(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Landed {
+    Haru,
+    Renderer,
 }
 
 #[derive(Default)]
 pub struct Updates {
-    asked: bool,
     working: Option<Receiver<Word>>,
     note: String,
     fresh: Option<String>,
+    due: Option<std::time::Instant>,
+    haru_ready: Option<String>,
+    renderer_ready: Option<String>,
+}
+
+pub const BETWEEN_CHECKS: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
+
+#[must_use]
+pub fn due_now(now: std::time::Instant, due: Option<std::time::Instant>) -> bool {
+    due.is_none_or(|at| now >= at)
 }
 
 impl Updates {
@@ -33,12 +49,21 @@ impl Updates {
         self.working.is_some()
     }
 
+    #[must_use]
+    pub fn ready(&self) -> (Option<&str>, Option<&str>) {
+        (self.haru_ready.as_deref(), self.renderer_ready.as_deref())
+    }
+
+    pub fn forget_renderer(&mut self) {
+        self.renderer_ready = None;
+    }
+
     pub fn tick(&mut self, wanted: bool) {
         self.collect();
-        if self.asked || self.busy() {
+        if self.busy() || !due_now(std::time::Instant::now(), self.due) {
             return;
         }
-        self.asked = true;
+        self.due = Some(std::time::Instant::now() + BETWEEN_CHECKS);
 
         let missing = install::installed().is_none();
         if !missing && !wanted {
@@ -73,6 +98,10 @@ impl Updates {
         loop {
             match heard.try_recv() {
                 Ok(Word::Note(note)) => self.note = note,
+                Ok(Word::Landed(what)) => match what {
+                    Landed::Haru => self.haru_ready = Some(self.note.clone()),
+                    Landed::Renderer => self.renderer_ready = Some(self.note.clone()),
+                },
                 Ok(Word::Done(note)) => {
                     if !note.is_empty() && note != "everything is up to date" {
                         self.fresh = Some(note.clone());
@@ -142,8 +171,49 @@ fn take(say: &std::sync::mpsc::Sender<Word>, build: &Build, myself: bool) -> Str
         update::take_renderer(build, &mut progress)
     };
     match taken {
-        Ok(_) if myself => format!("haru {} is ready — restart it", build.tag),
-        Ok(_) => format!("the renderer is now {}", build.tag),
+        Ok(_) => {
+            let note = if myself {
+                format!("haru {} is ready — restart it", build.tag)
+            } else {
+                format!("the renderer is now {}", build.tag)
+            };
+            let _ = say.send(Word::Note(note.clone()));
+            let _ = say.send(Word::Landed(if myself {
+                Landed::Haru
+            } else {
+                Landed::Renderer
+            }));
+            note
+        }
         Err(why) => format!("could not fetch {what}: {why}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn the_first_check_happens_right_away() {
+        assert!(due_now(Instant::now(), None));
+    }
+
+    #[test]
+    fn a_scheduled_check_waits_its_turn() {
+        let now = Instant::now();
+        assert!(!due_now(now, Some(now + Duration::from_secs(60))));
+        assert!(due_now(now, Some(now - Duration::from_secs(1))));
+    }
+
+    #[test]
+    fn checks_are_spaced_by_hours_not_seconds() {
+        assert!(BETWEEN_CHECKS >= Duration::from_secs(60 * 60));
+    }
+
+    #[test]
+    fn nothing_is_waiting_on_a_fresh_start() {
+        let updates = Updates::default();
+        assert_eq!(updates.ready(), (None, None));
     }
 }

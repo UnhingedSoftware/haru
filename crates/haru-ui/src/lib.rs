@@ -722,9 +722,7 @@ impl Browser {
     }
 
     fn search_box(&mut self, ui: &mut egui::Ui) {
-        let search = ui.add(
-            theme::field(&mut self.typed, "Search, then Enter   /"),
-        );
+        let search = ui.add(theme::field(&mut self.typed, "Search, then Enter   /"));
         if std::mem::take(&mut self.focus_search) {
             search.request_focus();
         }
