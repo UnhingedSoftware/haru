@@ -138,26 +138,40 @@ impl Settings {
                         egui::ScrollArea::vertical()
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
-                                match self.chosen {
-                                    Category::Account => {
-                                        self.steam(ui, signed_in, client, &mut actions);
-                                    }
-                                    Category::Renderer => {
-                                        self.renderer(ui, config, &engine.snapshot(), &mut actions);
-                                    }
-                                    Category::Wallpaper => self.wallpaper(ui, config, &mut actions),
-                                    Category::Installing => {
-                                        self.installing(ui, config, &mut actions);
+                                ui.set_max_width(ui.available_width().min(760.0));
+                                theme::card(14.0)
+                                    .inner_margin(egui::Margin::symmetric(20.0, 18.0))
+                                    .show(ui, |ui| {
+                                        match self.chosen {
+                                            Category::Account => {
+                                                self.steam(ui, signed_in, client, &mut actions);
+                                            }
+                                            Category::Renderer => {
+                                                self.renderer(
+                                                    ui,
+                                                    config,
+                                                    &engine.snapshot(),
+                                                    &mut actions,
+                                                );
+                                            }
+                                            Category::Wallpaper => {
+                                                self.wallpaper(ui, config, &mut actions)
+                                            }
+                                            Category::Installing => {
+                                                self.installing(ui, config, &mut actions);
+                                                ui.add_space(18.0);
+                                                self.libraries(ui, config, &mut actions);
+                                            }
+                                            Category::Browsing => {
+                                                Self::browsing(ui, config, &mut actions)
+                                            }
+                                            Category::About => {
+                                                self.about(ui, config, engine, &mut actions);
+                                            }
+                                        }
                                         ui.add_space(18.0);
-                                        self.libraries(ui, config, &mut actions);
-                                    }
-                                    Category::Browsing => Self::browsing(ui, config, &mut actions),
-                                    Category::About => {
-                                        self.about(ui, config, engine, &mut actions);
-                                    }
-                                }
-                                ui.add_space(18.0);
-                                self.saving(ui, config);
+                                        self.saving(ui, config);
+                                    });
                             });
                     });
                 });
