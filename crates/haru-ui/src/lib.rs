@@ -494,7 +494,7 @@ impl Browser {
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
             for (group, tag) in &picked {
-                if theme::chip(ui, &format!("{tag}  ✕"), true)
+                if theme::dismiss_chip(ui, tag)
                     .on_hover_text("Stop filtering by this")
                     .clicked()
                 {
@@ -723,9 +723,7 @@ impl Browser {
 
     fn search_box(&mut self, ui: &mut egui::Ui) {
         let search = ui.add(
-            egui::TextEdit::singleline(&mut self.typed)
-                .hint_text("Search, then Enter   /")
-                .desired_width(f32::INFINITY),
+            theme::field(&mut self.typed, "Search, then Enter   /"),
         );
         if std::mem::take(&mut self.focus_search) {
             search.request_focus();
@@ -769,6 +767,7 @@ impl Browser {
                     let picked = chosen.clone();
                     egui::CollapsingHeader::new(summary(group.label, &picked))
                         .id_salt(group.label)
+                        .show_background(true)
                         .show(ui, |ui| {
                             for tag in group.tags {
                                 let mut on = picked.iter().any(|held| held == tag);

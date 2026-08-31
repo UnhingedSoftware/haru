@@ -26,7 +26,7 @@ pub const CARD: Color32 = Color32::from_rgb(0x16, 0x16, 0x1F);
 
 const SURFACE: Color32 = Color32::from_rgb(0x1A, 0x1A, 0x24);
 
-const SURFACE_HOVER: Color32 = Color32::from_rgb(0x24, 0x24, 0x30);
+pub const SURFACE_HOVER: Color32 = Color32::from_rgb(0x24, 0x24, 0x30);
 
 pub const HAIRLINE: Color32 = Color32::from_rgb(0x23, 0x23, 0x2E);
 
@@ -89,7 +89,7 @@ pub fn apply(ctx: &egui::Context) {
     visuals.selection.bg_fill = ACCENT.gamma_multiply(0.45);
     visuals.selection.stroke = Stroke::new(1.0_f32, ACCENT);
 
-    let rounding = Rounding::same(11.0);
+    let rounding = Rounding::same(8.0);
     visuals.widgets.noninteractive.rounding = rounding;
     visuals.widgets.noninteractive.bg_fill = SURFACE;
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, HAIRLINE);
@@ -125,6 +125,7 @@ pub fn apply(ctx: &egui::Context) {
     visuals.window_shadow = visuals.popup_shadow;
 
     style.spacing.item_spacing = Vec2::new(8.0, 9.0);
+    style.spacing.interact_size = Vec2::new(40.0, 26.0);
     style.spacing.text_edit_width = 200.0;
     style.spacing.button_padding = Vec2::new(13.0, 7.0);
     style.spacing.menu_margin = egui::Margin::same(6.0);
@@ -198,6 +199,47 @@ pub fn chip(ui: &mut egui::Ui, text: &str, on: bool) -> egui::Response {
     );
     ui.painter()
         .galley(rect.center() - galley.size() / 2.0, galley, ink);
+    response
+}
+
+pub fn field<'a>(text: &'a mut String, hint: &str) -> egui::TextEdit<'a> {
+    egui::TextEdit::singleline(text)
+        .hint_text(hint)
+        .margin(egui::Margin::symmetric(10.0, 7.0))
+        .desired_width(f32::INFINITY)
+        .font(egui::FontId::proportional(13.0))
+}
+
+pub fn dismiss_chip(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    let label = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), egui::FontId::proportional(11.0), ACCENT);
+    let mark = ui.painter().layout_no_wrap(
+        crate::icons::Icon::Close.glyph().to_string(),
+        egui::FontId::new(11.0, egui::FontFamily::Name(ICONS.into())),
+        ACCENT,
+    );
+    let gap = 6.0;
+    let size = Vec2::new(
+        label.size().x + gap + mark.size().x + 20.0,
+        label.size().y.max(mark.size().y) + 9.0,
+    );
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let fill = if response.hovered() {
+        ACCENT_SOFT.gamma_multiply(1.6)
+    } else {
+        ACCENT_SOFT
+    };
+    ui.painter().rect_filled(rect, Rounding::same(999.0), fill);
+    let left = rect.left() + 10.0;
+    let middle = rect.center().y;
+    ui.painter()
+        .galley(egui::pos2(left, middle - label.size().y / 2.0), label.clone(), ACCENT);
+    ui.painter().galley(
+        egui::pos2(left + label.size().x + gap, middle - mark.size().y / 2.0),
+        mark,
+        ACCENT,
+    );
     response
 }
 

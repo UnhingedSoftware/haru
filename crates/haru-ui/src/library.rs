@@ -249,9 +249,7 @@ impl Library {
 
         ui.label(RichText::new("Filter").size(11.0).color(theme::MUTED));
         ui.add(
-            egui::TextEdit::singleline(&mut self.filter)
-                .hint_text("Title or type")
-                .desired_width(f32::INFINITY),
+            theme::field(&mut self.filter, "Title or type"),
         );
 
         let counts = self.counts();

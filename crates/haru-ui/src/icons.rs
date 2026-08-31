@@ -51,16 +51,18 @@ pub fn text(icon: Icon) -> egui::RichText {
 pub fn button(ui: &mut Ui, icon: Icon, active: bool) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(BUTTON), Sense::click());
 
-    let visuals = ui.style().interact_selectable(&response, active);
-    ui.painter()
-        .rect_filled(rect, visuals.rounding, visuals.weak_bg_fill);
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, egui::Rounding::same(7.0), theme::SURFACE_HOVER);
+    }
 
+    let ink = if active { theme::ACCENT } else { theme::MUTED };
     ui.painter().text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
         icon.glyph(),
         font(GLYPH),
-        visuals.fg_stroke.color,
+        if response.hovered() { theme::TEXT } else { ink },
     );
     response
 }
