@@ -49,6 +49,22 @@ impl Default for Preview {
     }
 }
 
+#[must_use]
+fn frame_rate(took: std::time::Duration) -> String {
+    let seconds = took.as_secs_f32();
+    if seconds <= 0.0 {
+        return "measuring\u{2026}".to_owned();
+    }
+    if seconds >= 1.0 {
+        return format!("{seconds:.1} s a frame");
+    }
+    format!(
+        "{:.0} ms a frame · {:.0} fps",
+        seconds * 1000.0,
+        1.0 / seconds
+    )
+}
+
 impl Preview {
     #[must_use]
     pub fn new() -> Self {
@@ -153,7 +169,7 @@ impl Preview {
                     }
                     if let Some(took) = self.took {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            ui.weak(format!("{:.1}s per frame", took.as_secs_f32()));
+                            ui.weak(frame_rate(took));
                         });
                     }
                 });
@@ -484,5 +500,25 @@ mod tests {
             });
             assert_eq!(pending.as_ref().map(|job| job.seq), Some(2));
         }
+    }
+
+    #[test]
+    fn a_quick_frame_reads_in_milliseconds_and_frames() {
+        let said = frame_rate(std::time::Duration::from_millis(16));
+        assert!(said.contains("16 ms"), "{said}");
+        assert!(said.contains("62 fps") || said.contains("63 fps"), "{said}");
+    }
+
+    #[test]
+    fn a_slow_frame_reads_in_seconds() {
+        assert_eq!(
+            frame_rate(std::time::Duration::from_millis(2500)),
+            "2.5 s a frame"
+        );
+    }
+
+    #[test]
+    fn nothing_measured_yet_says_so() {
+        assert_eq!(frame_rate(std::time::Duration::ZERO), "measuring\u{2026}");
     }
 }
