@@ -56,6 +56,7 @@ pub struct Library {
     pending: Option<(String, PathBuf)>,
     previewing: Option<Installed>,
     kind: Option<String>,
+    broken: Vec<String>,
 }
 
 impl Library {
@@ -89,6 +90,7 @@ impl Library {
             pending: None,
             previewing: None,
             kind: None,
+            broken: Vec::new(),
             confirming: None,
             settings: crate::props::Panel::default(),
             workshop,
@@ -119,7 +121,9 @@ impl Library {
     }
 
     pub fn refresh(&mut self, config: &Config, engine: &Engine) {
-        self.items = library::scan(&config.libraries());
+        let roots = config.libraries();
+        self.items = library::scan(&roots);
+        self.broken = library::unreadable(&roots);
         self.sync(engine);
         if self.selected.is_some_and(|index| index >= self.items.len()) {
             self.selected = None;
@@ -192,6 +196,17 @@ impl Library {
                         self.items.len(),
                         human_size(total)
                     ));
+                    if !self.broken.is_empty() {
+                        ui.separator();
+                        ui.label(
+                            RichText::new(format!("{} unreadable", self.broken.len()))
+                                .color(theme::DANGER),
+                        )
+                        .on_hover_text(format!(
+                            "No project.json Steam could read:\n{}",
+                            self.broken.join("\n")
+                        ));
+                    }
                     if !self.status.is_empty() {
                         ui.separator();
                         ui.label(RichText::new(&self.status).color(theme::MUTED));

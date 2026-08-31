@@ -117,6 +117,35 @@ pub fn scan(roots: &[PathBuf]) -> Vec<Installed> {
     items
 }
 
+#[must_use]
+pub fn unreadable(roots: &[PathBuf]) -> Vec<String> {
+    let known: Vec<String> = scan(roots).into_iter().map(|item| item.id).collect();
+    let mut broken: Vec<String> = Vec::new();
+
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(root.join(CONTENT)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let dir = entry.path();
+            if !dir.is_dir() {
+                continue;
+            }
+            let id = dir
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if id.is_empty() || known.contains(&id) || broken.contains(&id) {
+                continue;
+            }
+            broken.push(id);
+        }
+    }
+
+    broken.sort();
+    broken
+}
+
 fn read(dir: &Path, id: String) -> Option<Installed> {
     let project = std::fs::read_to_string(dir.join("project.json")).ok()?;
     let parsed: serde_json::Value = serde_json::from_str(&project).ok()?;
@@ -244,6 +273,17 @@ mod tests {
         scratch.item("5", r#"{"title":"Gone","preview":"preview.jpg"}"#);
         let found = scan(std::slice::from_ref(&scratch.0));
         assert_eq!(found.first().and_then(|item| item.preview.clone()), None);
+    }
+
+    #[test]
+    fn an_item_that_cannot_be_read_is_reported_by_id() {
+        let scratch = Scratch::new("broken");
+        scratch.item("11", r#"{"title":"Fine","type":"scene"}"#);
+        scratch.item("22", "not json at all");
+
+        let roots = std::slice::from_ref(&scratch.0);
+        assert_eq!(scan(roots).len(), 1);
+        assert_eq!(unreadable(roots), vec!["22".to_owned()]);
     }
 
     #[test]
