@@ -300,7 +300,7 @@ impl Haru {
         };
         let note = haru_ready.or(renderer_ready).unwrap_or_default().to_owned();
 
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        {
             if theme::chip(ui, label, true).on_hover_text(note).clicked() {
                 if mine {
                     match haru_apply::update::relaunch_self() {
@@ -319,7 +319,7 @@ impl Haru {
                 }
             }
             ui.add_space(8.0);
-        });
+        }
     }
 
     fn screen_picker(&mut self, ui: &mut egui::Ui) {
@@ -331,6 +331,8 @@ impl Haru {
             {
                 self.help = !self.help;
             }
+            ui.add_space(8.0);
+            self.restart_prompt(ui);
             if !screens.is_empty() {
                 ui.add_space(10.0);
                 let chosen = self
@@ -852,7 +854,6 @@ impl Haru {
                         }
                     }
 
-                    self.restart_prompt(ui);
                     self.screen_picker(ui);
                 });
             });
