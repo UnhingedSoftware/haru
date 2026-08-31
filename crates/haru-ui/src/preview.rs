@@ -209,7 +209,6 @@ impl Preview {
         }
     }
 
-    /// Nothing is loaded: say what this tab is for, not just that it is empty.
     fn nothing_yet(&mut self, ui: &mut egui::Ui) {
         ui.vertical_centered(|ui| {
             ui.add_space(ui.available_height() * 0.34);
@@ -236,7 +235,6 @@ impl Preview {
         });
     }
 
-    /// The empty state offers a way out of itself; the app reads this.
     pub fn take_wants_library(&mut self) -> bool {
         std::mem::take(&mut self.wants_library)
     }

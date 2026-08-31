@@ -139,7 +139,6 @@ pub fn installed() -> Option<PathBuf> {
     places.into_iter().find(|path| path.is_file())
 }
 
-// kirie prints its name and version when it is run with nothing to do.
 #[must_use]
 pub fn version_of(binary: &Path) -> Option<String> {
     let spoke = std::process::Command::new(binary)
@@ -270,9 +269,6 @@ pub fn fetch(
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "download".to_owned());
-    // Unique per download, not per process: haru can be fetching the renderer
-    // for an update and for a first install at the same time, and one renaming
-    // its file away leaves the other with nothing to rename.
     static ORDINAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let ordinal = ORDINAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let staged = parent.join(format!("{name}.{}.{ordinal}.part", std::process::id()));

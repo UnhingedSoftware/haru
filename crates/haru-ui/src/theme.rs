@@ -2,8 +2,6 @@ use egui::{Color32, Rounding, Stroke, Vec2};
 
 pub const ACCENT: Color32 = Color32::from_rgb(0x8B, 0x5C, 0xF6);
 
-/// The second half of the pair: sakura against the violet. Used for warmth —
-/// hearts, the brand mark, a highlight that should feel soft rather than loud.
 pub const BLOSSOM: Color32 = Color32::from_rgb(0xFF, 0x6F, 0xA5);
 
 pub const ACCENT_SOFT: Color32 = Color32::from_rgb(0x27, 0x1F, 0x4A);
@@ -137,7 +135,6 @@ pub fn apply(ctx: &egui::Context) {
     ctx.set_style(style);
 }
 
-/// A raised block with its own edge — tiles, the detail pane, filter groups.
 pub fn card(rounding: f32) -> egui::Frame {
     egui::Frame::none()
         .fill(CARD)
@@ -145,8 +142,6 @@ pub fn card(rounding: f32) -> egui::Frame {
         .stroke(Stroke::new(1.0_f32, HAIRLINE))
 }
 
-/// Two colours blended left to right — the brand mark and anything that wants
-/// to feel like more than a flat rectangle.
 pub fn gradient(ui: &egui::Ui, rect: egui::Rect, rounding: f32, from: Color32, to: Color32) {
     use egui::epaint::{Mesh, Vertex};
 
@@ -172,7 +167,6 @@ pub fn gradient(ui: &egui::Ui, rect: egui::Rect, rounding: f32, from: Color32, t
         .rect_filled(rect, Rounding::same(rounding), Color32::TRANSPARENT);
 }
 
-/// A soft ring outside a shape rather than a hard line on it.
 pub fn glow(ui: &egui::Ui, rect: egui::Rect, rounding: f32, colour: Color32, strength: f32) {
     for step in 1..=3 {
         let spread = step as f32 * 2.0;
@@ -185,7 +179,6 @@ pub fn glow(ui: &egui::Ui, rect: egui::Rect, rounding: f32, colour: Color32, str
     }
 }
 
-/// A small rounded label: a tag, a resolution, "Audio responsive".
 pub fn chip(ui: &mut egui::Ui, text: &str, on: bool) -> egui::Response {
     let (fill, ink) = if on {
         (ACCENT_SOFT, ACCENT)
@@ -202,7 +195,6 @@ pub fn chip(ui: &mut egui::Ui, text: &str, on: bool) -> egui::Response {
         .response
 }
 
-/// The one action a panel is really for: filled, full width, unmissable.
 pub fn primary(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let button = egui::Button::new(egui::RichText::new(text).size(13.0).color(Color32::WHITE))
         .fill(ACCENT)

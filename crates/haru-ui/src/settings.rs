@@ -703,8 +703,6 @@ impl Settings {
         ui.add_space(18.0);
     }
 
-    // Versions and where things live, so a machine can be tidied up without
-    // guessing which binary is running.
     fn about(
         &mut self,
         ui: &mut egui::Ui,
@@ -787,7 +785,6 @@ impl Settings {
         });
     }
 
-    // Asking a binary its version means running it, so ask once per path.
     fn renderer_version(&mut self, binary: &std::path::Path) -> Option<String> {
         if let Some((seen, version)) = &self.renderer_seen
             && seen == binary

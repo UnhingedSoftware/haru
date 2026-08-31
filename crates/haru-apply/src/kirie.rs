@@ -112,8 +112,6 @@ impl Backend for Kirie {
     }
 }
 
-// kirie answers `error <reason>`; the engine it stands in for answers a bare
-// `error`, so a missing reason is not a fault.
 fn why(said: &str) -> String {
     let reason = said.strip_prefix("error").unwrap_or(said).trim();
     if reason.is_empty() {

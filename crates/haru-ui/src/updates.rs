@@ -17,7 +17,6 @@ pub struct Updates {
 }
 
 impl Updates {
-    /// What just happened, once, for somewhere other than the settings pane.
     pub fn take_news(&mut self) -> Option<String> {
         self.fresh.take()
     }
@@ -34,8 +33,6 @@ impl Updates {
         self.working.is_some()
     }
 
-    /// Fetch the renderer if it is missing, then keep both up to date. Runs once
-    /// per launch; everything slow happens on its own thread.
     pub fn tick(&mut self, wanted: bool) {
         self.collect();
         if self.asked || self.busy() {
@@ -116,7 +113,6 @@ fn work(say: &std::sync::mpsc::Sender<Word>, missing: bool, updating: bool) {
             Err(why) => said.push(format!("could not check the renderer: {why}")),
         }
     }
-    // A repository with no release yet is not a fault worth reporting.
     if let Ok(Some(build)) = update::haru_update() {
         said.push(take(say, &build, true));
     }

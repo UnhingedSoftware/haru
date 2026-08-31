@@ -29,9 +29,6 @@ pub fn haru_asset() -> String {
     format!("haru-{}-{}", system(), std::env::consts::ARCH)
 }
 
-// Releases are tagged `v0.6.0`; a binary reports `0.6.0`. Compare the numbers,
-// and treat anything unreadable as "not newer" so a strange tag never triggers
-// an update on its own.
 #[must_use]
 pub fn newer(offered: &str, running: &str) -> bool {
     let parts = |text: &str| -> Vec<u64> {
@@ -67,8 +64,6 @@ pub fn take_renderer(build: &Build, progress: &mut dyn FnMut(u64, u64)) -> Resul
     install::fetch(build, &target, progress)
 }
 
-// Replacing a running program is fine on unix: the file is unlinked and this
-// process keeps the copy it is already executing until it exits.
 pub fn take_haru(build: &Build, progress: &mut dyn FnMut(u64, u64)) -> Result<PathBuf, String> {
     let running = std::env::current_exe().map_err(|error| format!("{error}"))?;
     install::fetch(build, &running, progress)
@@ -100,7 +95,6 @@ mod tests {
 
     #[test]
     fn a_missing_version_still_lets_an_update_through() {
-        // An installed binary too old to report its version reads as 0.0.0.
         assert!(newer("v0.6.0", ""));
     }
 

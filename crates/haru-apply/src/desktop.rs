@@ -133,8 +133,6 @@ fn bundle(path: &Path, binary: &Path) -> Result<(), String> {
     Ok(())
 }
 
-// A single-size icns looks soft in the Dock, so build the whole iconset the
-// way the release does. Best effort: an app without an icon still runs.
 fn icon(resources: &Path) {
     let png = resources.join("haru.png");
     if std::fs::write(&png, LARGE).is_err() {

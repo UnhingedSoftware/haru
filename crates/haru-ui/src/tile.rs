@@ -7,7 +7,6 @@ use tapline::BrowseResult;
 
 const CAPTION: f32 = 42.0;
 
-/// Picture height as a share of the tile's width — wallpapers are landscape.
 pub const ASPECT: f32 = 0.60;
 
 const FILL: f32 = 0.65;
@@ -56,7 +55,6 @@ pub fn show(
                 let (slot, response) =
                     ui.allocate_exact_size(Vec2::new(size, height), Sense::click());
 
-                // A tile lifts a little when pointed at, the way a card does.
                 let lift = ui.ctx().animate_bool_with_time(
                     response.id,
                     response.hovered() || selected,
@@ -106,14 +104,11 @@ pub fn show(
     response.on_hover_text(title).clicked()
 }
 
-/// The name sits on the picture, over a fade, the way a poster does.
 fn caption(ui: &egui::Ui, rect: egui::Rect, title: &str, found: &BrowseResult) {
     let loved = (found.favorites > 0).then(|| format!("♥ {}", human_count(found.favorites)));
     caption_for(ui, rect, title, &meta(found), loved.as_deref(), theme::LOVE);
 }
 
-/// The name on the picture over a fade, the way a poster does it — shared by
-/// anything with a thumbnail, a name and a line under it.
 pub fn caption_for(
     ui: &egui::Ui,
     rect: egui::Rect,
@@ -131,8 +126,6 @@ pub fn caption_for(
     let painter = ui.painter();
     let left = band.left() + 12.0;
 
-    // Measure rather than count characters: a CJK title is half the glyphs and
-    // twice the width.
     let mut kept = band.width() - 24.0;
     if let Some(aside) = aside {
         let side = one_line(ui, aside, 11.0, aside_colour, band.width());
@@ -170,8 +163,6 @@ fn one_line(
     ui.fonts(|fonts| fonts.layout_job(job))
 }
 
-/// While a picture is on its way, a slow sheen across the empty tile — quieter
-/// than a spinner and it keeps the grid's shape.
 pub fn shimmer(ui: &egui::Ui, rect: egui::Rect, rounding: Rounding) {
     use egui::epaint::{Mesh, Vertex};
 
@@ -264,7 +255,6 @@ fn meta(found: &BrowseResult) -> String {
 mod tests {
     use super::*;
 
-    // One row's height, from the same numbers the drawing uses.
     fn row_height(tile_width: f32, spacing: f32) -> f32 {
         tile_width * ASPECT + CAPTION + spacing
     }

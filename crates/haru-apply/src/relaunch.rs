@@ -58,9 +58,6 @@ impl Backend for Relaunch {
     }
 
     fn screens(&self) -> Result<Vec<Screen>, String> {
-        // One desktop, one name. kirie names its screens after the display, but
-        // letting both names through means two keys for one wallpaper, and a
-        // launch that passes a --bg for each.
         let live = self
             .speaking()
             .and_then(|live| live.screens().ok())
@@ -79,9 +76,6 @@ impl Backend for Relaunch {
     }
 
     fn apply(&self, screen: &str, dir: &Path) -> Result<(), String> {
-        // The socket refuses what the render loop cannot swap in — a web
-        // wallpaper is a webview in the window, not a scene. Relaunching with it
-        // works, so treat a refusal as "start it again with this one".
         let swapped = match self.speaking() {
             Some(live) => live.apply(screen, dir).is_ok(),
             None => false,
