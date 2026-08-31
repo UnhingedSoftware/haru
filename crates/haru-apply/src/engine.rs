@@ -225,7 +225,11 @@ fn poll(engine: &dyn Backend, shared: &Arc<Mutex<Snapshot>>) {
     };
     let pid = launch::pid();
     let binary = install::installed();
-    let connectors = launch::connectors();
+    let connectors = if cfg!(target_os = "linux") || screens.is_empty() {
+        launch::connectors()
+    } else {
+        Vec::new()
+    };
 
     if let Ok(mut snapshot) = shared.lock() {
         snapshot.available = available;
@@ -239,6 +243,54 @@ fn poll(engine: &dyn Backend, shared: &Arc<Mutex<Snapshot>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Reporting(Vec<Screen>);
+
+    impl Backend for Reporting {
+        fn name(&self) -> &'static str {
+            "reporting"
+        }
+        fn available(&self) -> bool {
+            true
+        }
+        fn screens(&self) -> Result<Vec<Screen>, String> {
+            Ok(self.0.clone())
+        }
+        fn apply(&self, _screen: &str, _dir: &std::path::Path) -> Result<(), String> {
+            Ok(())
+        }
+        fn set_property(&self, _screen: &str, _key: &str, _value: &str) -> Result<(), String> {
+            Ok(())
+        }
+        fn stage(&self, _key: &str, _value: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_reported_screen_leaves_no_placeholder_beside_it() {
+        if cfg!(target_os = "linux") {
+            return;
+        }
+        let engine = Reporting(vec![Screen {
+            name: "Built-in Retina Display".to_owned(),
+            current: None,
+        }]);
+        let shared = Arc::new(Mutex::new(Snapshot::default()));
+        poll(&engine, &shared);
+        let seen = shared.lock().map(|held| held.clone()).unwrap_or_default();
+        assert_eq!(seen.screens.len(), 1);
+        assert!(seen.connectors.is_empty(), "{:?}", seen.connectors);
+    }
+
+    #[test]
+    fn with_nothing_reported_the_placeholder_stands_in() {
+        let engine = Reporting(Vec::new());
+        let shared = Arc::new(Mutex::new(Snapshot::default()));
+        poll(&engine, &shared);
+        let seen = shared.lock().map(|held| held.clone()).unwrap_or_default();
+        assert_eq!(seen.connectors, launch::connectors());
+    }
 
     #[test]
     fn a_snapshot_is_readable_before_the_first_poll_answers() {
