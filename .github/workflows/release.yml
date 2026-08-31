@@ -108,13 +108,14 @@ jobs:
 
           | File | What it is |
           | --- | --- |
-          | `haru-linux-x86_64` | the picker — `chmod +x`, run |
+          | `haru-linux-x86_64` | the picker: `chmod +x`, run |
           | `haru-desktop-linux.tar.gz` | desktop entry and icons: `tar xf`, then `packaging/install.sh ./haru-linux-x86_64` |
-          | `haru-macos-aarch64.dmg` | macOS — open it and drag haru into Applications |
+          | `haru-macos-aarch64.dmg` | macOS: open it and drag haru into Applications |
           | `haru-macos-aarch64` | the same app as a bare binary, for a terminal |
 
-          If macOS says it "could not verify haru.app", this build was not
-          notarized. Clear the download flag once and it opens normally:
+          macOS will say it "could not verify haru.app". These builds are
+          ad-hoc signed only, with no Apple Developer ID and no notarization,
+          so clear the download flag once and it opens normally:
 
           ```sh
           xattr -dr com.apple.quarantine /Applications/haru.app

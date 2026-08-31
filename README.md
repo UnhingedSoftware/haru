@@ -65,39 +65,39 @@ where kirie, Wallpaper Engine and Steam already look.
 
 ## Installing on macOS
 
-Open `haru-macos-aarch64.dmg` and drag haru into Applications, as usual.
+Open `haru-macos-aarch64.dmg` and drag haru into Applications, the usual way.
 
-macOS will then refuse to open it:
+The first launch gets refused:
 
-> "haru.app" Not Opened — Apple could not verify "haru.app" is free of malware…
+> "haru.app" Not Opened - Apple could not verify "haru.app" is free of malware...
 
-Nothing is wrong with the app. Releases are signed, but not *notarized* —
-notarizing means paying Apple for a Developer Program membership and sending
-every build to them for scanning. Until that happens macOS treats the app as
-downloaded-and-unverified, and on macOS 15 the old right-click → Open way
-around it is gone: the dialog only offers **Move to Trash** or **Done**. Press
-**Done** — not Trash — and allow it one of these two ways.
+Nothing is wrong with the app. These builds carry an ad-hoc signature only:
+no Apple Developer ID, no notarization. Both of those need a paid Developer
+Program membership and a scan of every build, so until that exists macOS files
+haru under "downloaded, unverified". On macOS 15 the old right-click -> Open
+trick is gone as well: the dialog offers **Move to Trash** or **Done**. Press
+**Done**, then let it through one of these two ways.
 
-**In System Settings.** Privacy & Security → scroll to Security → next to
-"haru.app was blocked to protect your Mac", press **Open Anyway**. Confirm with
-Touch ID or your password. Once is enough.
+**In System Settings.** Privacy & Security -> scroll down to Security -> next
+to "haru.app was blocked to protect your Mac", press **Open Anyway** and
+confirm with Touch ID or your password. Once is enough; later launches just
+work.
 
-**In a terminal.** Clear the flag macOS set when the file was downloaded:
+**In a terminal.** Strip the quarantine flag macOS put on the download:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/haru.app
 open /Applications/haru.app
 ```
 
-kirie needs the same treatment if you downloaded its binary rather than
-building it:
+kirie wants the same if you downloaded its binary instead of building it:
 
 ```sh
 xattr -d com.apple.quarantine ~/.local/bin/kirie
 ```
 
-Neither step is needed for something you built yourself — the flag is only
-attached to downloads.
+Anything you build yourself skips all of this. The flag only lands on
+downloads.
 
 ## Build
 
