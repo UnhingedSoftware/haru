@@ -543,7 +543,8 @@ impl Settings {
             });
         }
 
-        ui.add_space(10.0);
+        ui.add_space(12.0);
+        Self::section(ui, "Pace");
         ui.horizontal(|ui| {
             ui.label("Frame rate");
             ui.add(
@@ -570,7 +571,8 @@ impl Settings {
             ui.add(egui::Slider::new(&mut config.renderer.playback_speed, 0.1..=4.0).step_by(0.1));
         });
 
-        ui.add_space(10.0);
+        ui.add_space(12.0);
+        Self::section(ui, "Sound");
         ui.checkbox(&mut config.renderer.mute, "Mute");
         ui.add_enabled_ui(!config.renderer.mute, |ui| {
             ui.horizontal(|ui| {
@@ -579,7 +581,8 @@ impl Settings {
             });
         });
 
-        ui.add_space(10.0);
+        ui.add_space(12.0);
+        Self::section(ui, "Pointer and motion");
         ui.checkbox(&mut config.renderer.disable_parallax, "No parallax")
             .on_hover_text("Stops the scene leaning towards the pointer.");
         ui.checkbox(&mut config.renderer.disable_mouse, "Ignore the pointer");
@@ -592,6 +595,8 @@ impl Settings {
              wallpaper instead of the desktop itself.",
         );
         ui.checkbox(&mut config.renderer.disable_particles, "No particles");
+        ui.add_space(12.0);
+        Self::section(ui, "While you work");
         ui.checkbox(
             &mut config.renderer.no_automute,
             "Keep sound when something else plays",
@@ -811,6 +816,11 @@ impl Settings {
         let version = haru_apply::install::version_of(binary)?;
         self.renderer_seen = Some((binary.to_path_buf(), version.clone()));
         Some(version)
+    }
+
+    fn section(ui: &mut egui::Ui, what: &str) {
+        ui.label(RichText::new(what).size(11.0).strong().color(theme::ACCENT));
+        ui.add_space(3.0);
     }
 
     fn saving(&mut self, ui: &mut egui::Ui, config: &Config) {
