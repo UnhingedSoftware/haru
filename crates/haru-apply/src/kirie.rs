@@ -102,6 +102,9 @@ impl Backend for Kirie {
     }
 
     fn apply(&self, screen: &str, dir: &Path) -> Result<(), String> {
+        if dir.as_os_str().is_empty() {
+            return Err("no wallpaper to put up".to_owned());
+        }
         let reply = self.ask(&put_up_command(
             screen,
             dir,
@@ -142,6 +145,15 @@ pub(crate) fn default_socket() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn an_empty_wallpaper_is_refused_before_the_socket() {
+        let engine = Kirie::new(Some(std::path::PathBuf::from(
+            "/nonexistent/haru-test.sock",
+        )));
+        let refused = engine.apply("DP-1", Path::new(""));
+        assert_eq!(refused, Err("no wallpaper to put up".to_owned()));
+    }
 
     #[test]
     fn one_screen_needs_no_name() {

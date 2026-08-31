@@ -53,10 +53,17 @@ impl Config {
 
     #[must_use]
     pub fn load() -> Self {
-        Self::path()
+        let mut held: Self = Self::path()
             .and_then(|path| std::fs::read_to_string(path).ok())
             .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        held.forget_empty_screens();
+        held
+    }
+
+    pub fn forget_empty_screens(&mut self) {
+        self.screens
+            .retain(|_, wallpaper| !wallpaper.as_os_str().is_empty());
     }
 
     pub fn save(&self) -> Result<(), String> {
@@ -98,6 +105,22 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_screen_remembered_with_no_wallpaper_is_dropped() {
+        let mut config = Config::default();
+        config
+            .screens
+            .insert("DP-1".to_owned(), std::path::PathBuf::new());
+        config
+            .screens
+            .insert("DP-2".to_owned(), std::path::PathBuf::from("/wall/one"));
+
+        config.forget_empty_screens();
+
+        assert_eq!(config.screens.len(), 1);
+        assert!(config.screens.contains_key("DP-2"));
+    }
     use super::*;
 
     #[test]
