@@ -130,8 +130,10 @@ jobs:
 
           EOF
           if gh release view "$V" >/dev/null 2>&1; then
-            echo "release $V exists — updating in place"
-            gh release edit "$V" --draft --title "$V" --notes-file RELEASE_NOTES.md
+            state="$(gh release view "$V" --json isDraft,isPrerelease \
+              --jq 'if .isDraft then "--draft" elif .isPrerelease then "--prerelease" else "--latest" end')"
+            echo "release $V exists ($state) — updating in place"
+            gh release edit "$V" $state --title "$V" --notes-file RELEASE_NOTES.md
             # Cleared by name first: a run cancelled mid-upload leaves a
             # half-created asset, and the API then answers 400 for a fresh
             # upload of that name rather than replacing it.
