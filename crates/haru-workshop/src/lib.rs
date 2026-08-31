@@ -145,7 +145,7 @@ async fn sign_in(
     replies: &Sender<(RequestId, Reply)>,
     id: RequestId,
 ) -> Reply {
-    const PATIENCE: std::time::Duration = std::time::Duration::from_secs(180);
+    const PATIENCE: std::time::Duration = std::time::Duration::from_secs(600);
 
     let outbound = replies.clone();
     let mut on_code = move |url: &str| {

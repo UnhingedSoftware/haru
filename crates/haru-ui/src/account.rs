@@ -8,6 +8,7 @@ pub struct Account {
     client: bool,
     code: Option<(String, Option<egui::TextureHandle>)>,
     waiting: bool,
+    refreshed: bool,
     status: String,
 }
 
@@ -26,6 +27,7 @@ impl Account {
             client: false,
             code: None,
             waiting: false,
+            refreshed: false,
             status: String::new(),
         }
     }
@@ -44,13 +46,24 @@ impl Account {
     }
 
     pub fn show_code(&mut self, url: String) {
+        let replaced = self
+            .code
+            .as_ref()
+            .is_some_and(|(held, _)| held.as_str() != url.as_str());
         self.code = Some((url, None));
+        self.refreshed = replaced;
         self.waiting = true;
         self.open = true;
     }
 
+    #[must_use]
+    pub fn refreshed(&self) -> bool {
+        self.refreshed
+    }
+
     pub fn signed_in(&mut self, account: String) {
         self.who = Some(account);
+        self.refreshed = false;
         self.code = None;
         self.waiting = false;
         self.open = false;
@@ -192,9 +205,17 @@ impl Account {
                     ui.add(egui::Image::new(&*picture).fit_to_exact_size(egui::vec2(220.0, 220.0)));
                     ui.add_space(6.0);
                     ui.label(
-                        RichText::new("Scan it with the Steam mobile app")
-                            .small()
-                            .color(theme::MUTED),
+                        RichText::new(if self.refreshed {
+                            "Steam refreshed this code — scan or open it again"
+                        } else {
+                            "Scan it with the Steam mobile app"
+                        })
+                        .small()
+                        .color(if self.refreshed {
+                            theme::BLOSSOM
+                        } else {
+                            theme::MUTED
+                        }),
                     );
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
