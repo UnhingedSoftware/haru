@@ -203,7 +203,12 @@ impl Haru {
             let _ = self.config.save();
             self.refresh_startup();
         }
-        self.updates.tick(self.config.auto_update, self.config.beta);
+        self.remember_web();
+        self.updates.tick(
+            self.config.auto_update,
+            self.config.beta,
+            self.chosen_web(),
+        );
         if let Some(news) = self.updates.take_news() {
             self.toasts.say(news.clone());
             self.library.say(&news);
@@ -430,6 +435,22 @@ impl Haru {
             _ => return,
         }
         self.assets_request = None;
+    }
+
+    fn chosen_web(&self) -> Option<haru_apply::install::Web> {
+        self.config
+            .renderer_web
+            .as_deref()
+            .and_then(haru_apply::install::Web::from_key)
+    }
+
+    fn remember_web(&mut self) {
+        if self.config.renderer_web.is_some() || haru_apply::install::installed().is_none() {
+            return;
+        }
+        self.config.renderer_web =
+            Some(haru_apply::install::Web::suggested().key().to_owned());
+        let _ = self.config.save();
     }
 
     fn overlays(&mut self, ctx: &egui::Context) {

@@ -51,11 +51,11 @@ pub fn haru_update(betas: bool) -> Result<Option<Build>, String> {
     Ok(newer(&build.tag, env!("CARGO_PKG_VERSION")).then_some(build))
 }
 
-pub fn renderer_update(binary: &Path, betas: bool) -> Result<Option<Build>, String> {
+pub fn renderer_update(binary: &Path, web: install::Web, betas: bool) -> Result<Option<Build>, String> {
     let build = if betas {
-        install::latest_including_betas(install::Web::suggested())?
+        install::latest_including_betas(web)?
     } else {
-        install::latest(install::Web::suggested())?
+        install::latest(web)?
     };
     let running = install::version_of(binary).unwrap_or_default();
     Ok(newer(&build.tag, &running).then_some(build))
@@ -104,6 +104,18 @@ fn replaced_path(running: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_update_asks_for_the_variant_it_was_given() {
+        for web in [install::Web::WebKit, install::Web::Cef] {
+            let asset = web.asset();
+            if cfg!(target_os = "macos") {
+                assert!(asset.starts_with("kirie-macos-"), "{asset}");
+            } else {
+                assert!(asset.contains(web.key().replace("webkit", "webview").as_str()), "{asset}");
+            }
+        }
+    }
 
     #[test]
     fn a_replaced_binary_is_found_where_it_was_put_back() {
