@@ -51,7 +51,11 @@ pub fn haru_update(betas: bool) -> Result<Option<Build>, String> {
     Ok(newer(&build.tag, env!("CARGO_PKG_VERSION")).then_some(build))
 }
 
-pub fn renderer_update(binary: &Path, web: install::Web, betas: bool) -> Result<Option<Build>, String> {
+pub fn renderer_update(
+    binary: &Path,
+    web: install::Web,
+    betas: bool,
+) -> Result<Option<Build>, String> {
     let build = if betas {
         install::latest_including_betas(web)?
     } else {
@@ -112,7 +116,10 @@ mod tests {
             if cfg!(target_os = "macos") {
                 assert!(asset.starts_with("kirie-macos-"), "{asset}");
             } else {
-                assert!(asset.contains(web.key().replace("webkit", "webview").as_str()), "{asset}");
+                assert!(
+                    asset.contains(web.key().replace("webkit", "webview").as_str()),
+                    "{asset}"
+                );
             }
         }
     }

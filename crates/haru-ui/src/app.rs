@@ -203,11 +203,8 @@ impl Haru {
             self.refresh_startup();
         }
         self.remember_web();
-        self.updates.tick(
-            self.config.auto_update,
-            self.config.beta,
-            self.chosen_web(),
-        );
+        self.updates
+            .tick(self.config.auto_update, self.config.beta, self.chosen_web());
         if let Some(news) = self.updates.take_news() {
             self.toasts.say(news.clone());
             self.library.say(&news);
@@ -447,8 +444,7 @@ impl Haru {
         if self.config.renderer_web.is_some() || haru_apply::install::installed().is_none() {
             return;
         }
-        self.config.renderer_web =
-            Some(haru_apply::install::Web::suggested().key().to_owned());
+        self.config.renderer_web = Some(haru_apply::install::Web::suggested().key().to_owned());
         let _ = self.config.save();
     }
 
