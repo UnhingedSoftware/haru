@@ -69,12 +69,11 @@ pub fn take_renderer(build: &Build, progress: &mut dyn FnMut(u64, u64)) -> Resul
 }
 
 pub fn take_haru(build: &Build, progress: &mut dyn FnMut(u64, u64)) -> Result<PathBuf, String> {
-    let running = std::env::current_exe().map_err(|error| format!("{error}"))?;
-    install::fetch(build, &running, progress)
+    install::fetch(build, &running_binary()?, progress)
 }
 
 pub fn relaunch_self() -> Result<(), String> {
-    let running = std::env::current_exe().map_err(|error| format!("{error}"))?;
+    let running = running_binary()?;
     let arguments: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
     std::process::Command::new(running)
         .args(arguments)
@@ -83,9 +82,54 @@ pub fn relaunch_self() -> Result<(), String> {
         .map_err(|error| format!("{error}"))
 }
 
+pub fn running_binary() -> Result<PathBuf, String> {
+    let running = std::env::current_exe().map_err(|error| format!("{error}"))?;
+    Ok(still_there(&running).unwrap_or(running))
+}
+
+fn still_there(running: &Path) -> Option<PathBuf> {
+    if running.exists() {
+        return Some(running.to_path_buf());
+    }
+    let replaced = replaced_path(running)?;
+    replaced.exists().then_some(replaced)
+}
+
+fn replaced_path(running: &Path) -> Option<PathBuf> {
+    let text = running.to_string_lossy();
+    let cleaned = text.strip_suffix(" (deleted)")?;
+    (!cleaned.is_empty()).then(|| PathBuf::from(cleaned))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_replaced_binary_is_found_where_it_was_put_back() {
+        let dir = std::env::temp_dir().join("haru-update-replaced");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        let real = dir.join("haru");
+        let _ = std::fs::write(&real, b"binary");
+        let deleted = dir.join("haru (deleted)");
+
+        assert_eq!(still_there(&deleted), Some(real.clone()));
+        assert_eq!(still_there(&real), Some(real));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_binary_that_is_really_gone_is_not_invented() {
+        let missing = std::env::temp_dir().join("haru-update-missing/haru (deleted)");
+        assert_eq!(still_there(&missing), None);
+    }
+
+    #[test]
+    fn a_path_that_ends_in_deleted_by_name_is_left_alone() {
+        let plain = std::path::Path::new("/tmp/haru");
+        assert_eq!(replaced_path(plain), None);
+    }
 
     #[test]
     fn a_higher_version_is_offered() {

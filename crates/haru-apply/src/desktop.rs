@@ -29,7 +29,7 @@ pub fn installed() -> bool {
 
 pub fn install() -> Result<PathBuf, String> {
     let path = entry().ok_or("no home directory to install into")?;
-    let binary = std::env::current_exe().map_err(|error| format!("{error}"))?;
+    let binary = crate::update::running_binary()?;
 
     if cfg!(target_os = "macos") {
         bundle(&path, &binary)?;

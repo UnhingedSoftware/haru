@@ -811,7 +811,7 @@ impl Settings {
         });
         ui.add_space(8.0);
 
-        let mine = std::env::current_exe().ok();
+        let mine = haru_apply::update::running_binary().ok();
         Self::entry(
             ui,
             &format!("haru {}", env!("CARGO_PKG_VERSION")),
