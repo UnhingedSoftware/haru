@@ -124,7 +124,6 @@ impl Haru {
 
         let mut installer = crate::renderer::Installer::new();
         if config.offer_renderer
-            && !config.auto_update
             && haru_apply::install::supported()
             && haru_apply::install::installed().is_none()
         {

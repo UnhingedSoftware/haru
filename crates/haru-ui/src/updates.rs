@@ -65,8 +65,7 @@ impl Updates {
         }
         self.due = Some(std::time::Instant::now() + BETWEEN_CHECKS);
 
-        let missing = install::installed().is_none();
-        if !missing && !wanted {
+        if !wanted || install::installed().is_none() {
             return;
         }
         if !install::supported() {
@@ -76,15 +75,11 @@ impl Updates {
 
         let (say, heard) = channel();
         self.working = Some(heard);
-        self.note = if missing {
-            "fetching the renderer…".to_owned()
-        } else {
-            "checking for updates…".to_owned()
-        };
+        self.note = "checking for updates…".to_owned();
 
         let started = std::thread::Builder::new()
             .name("haru-updates".to_owned())
-            .spawn(move || work(&say, missing, wanted, betas, web));
+            .spawn(move || work(&say, betas, web));
         if started.is_err() {
             self.working = None;
             self.note = "could not start the update thread".to_owned();
@@ -120,32 +115,8 @@ impl Updates {
     }
 }
 
-fn work(
-    say: &std::sync::mpsc::Sender<Word>,
-    missing: bool,
-    updating: bool,
-    betas: bool,
-    web: Option<install::Web>,
-) {
+fn work(say: &std::sync::mpsc::Sender<Word>, betas: bool, web: Option<install::Web>) {
     let web = web.unwrap_or_else(install::Web::suggested);
-    if missing {
-        let wanted = if betas {
-            install::latest_including_betas(web)
-        } else {
-            install::latest(web)
-        };
-        let note = match wanted {
-            Ok(build) => take(say, &build, false),
-            Err(why) => format!("could not reach the renderer's releases: {why}"),
-        };
-        let _ = say.send(Word::Done(note));
-        return;
-    }
-    if !updating {
-        let _ = say.send(Word::Done(String::new()));
-        return;
-    }
-
     let mut said: Vec<String> = Vec::new();
     if let Some(binary) = install::installed() {
         match update::renderer_update(&binary, web, betas) {
