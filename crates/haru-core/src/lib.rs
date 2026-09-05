@@ -342,3 +342,43 @@ mod tests {
         assert_eq!(human_size(25_179_527), "24.0 MB");
     }
 }
+
+/// Where kirie puts its control socket when the session has no
+/// `XDG_RUNTIME_DIR` (macOS, or a bare login). The temp dir is shared between
+/// accounts there, so a fixed name collides and the second user cannot even
+/// unlink the first one's socket under the sticky bit. This must stay in step
+/// with kirie's own `default_control_socket`.
+#[must_use]
+pub fn runtime_dir() -> std::path::PathBuf {
+    if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
+        return std::path::PathBuf::from(runtime);
+    }
+    let dir = std::env::temp_dir().join(format!("kirie-{}", user_tag()));
+    if std::fs::create_dir_all(&dir).is_ok() {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    }
+    dir
+}
+
+fn user_tag() -> String {
+    use std::os::unix::fs::MetadataExt;
+    if let Some(home) = std::env::var_os("HOME")
+        && let Ok(meta) = std::fs::metadata(&home)
+    {
+        return meta.uid().to_string();
+    }
+    std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap_or_else(|_| "shared".to_owned())
+}
+
+#[cfg(test)]
+mod runtime_dir_tests {
+    #[test]
+    fn the_fallback_is_per_user() {
+        let tag = super::user_tag();
+        assert!(!tag.is_empty());
+        assert!(!tag.contains('/'), "used as a directory name: {tag}");
+    }
+}

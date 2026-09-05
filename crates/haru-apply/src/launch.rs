@@ -222,10 +222,7 @@ pub fn restart(binary: &Path, socket: &Path, plan: &[Plan]) -> Result<(), String
 
 #[must_use]
 pub fn log() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("haru-kirie.log")
+    haru_core::runtime_dir().join("haru-kirie.log")
 }
 
 fn spawn_detached(binary: &Path, arguments: &[String]) -> Result<(), String> {

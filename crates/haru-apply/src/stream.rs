@@ -140,10 +140,7 @@ impl Drop for Preview {
 }
 
 fn socket_path() -> PathBuf {
-    let base = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    base.join(format!("haru-preview-{}.sock", std::process::id()))
+    haru_core::runtime_dir().join(format!("haru-preview-{}.sock", std::process::id()))
 }
 
 #[cfg(test)]
