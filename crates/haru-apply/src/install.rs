@@ -131,9 +131,9 @@ fn library_directories() -> Vec<PathBuf> {
 
 /// What the renderer is called once it is on disk.
 #[cfg(windows)]
-const RENDERER: &str = "kirie.exe";
+pub(crate) const RENDERER: &str = "kirie.exe";
 #[cfg(not(windows))]
-const RENDERER: &str = "kirie";
+pub(crate) const RENDERER: &str = "kirie";
 
 #[must_use]
 pub fn installed() -> Option<PathBuf> {
@@ -672,9 +672,15 @@ mod tests {
     }
 
     #[test]
-    fn an_install_goes_under_the_home_directory() {
-        if let Some(target) = destination() {
-            assert!(target.ends_with(".local/bin/kirie"), "{}", target.display());
+    fn an_install_goes_where_this_os_keeps_its_programs() {
+        let Some(target) = destination() else { return };
+        let text = target.to_string_lossy();
+        if cfg!(windows) {
+            // Beside the socket and the rest of kirie's state, since Windows
+            // has no directory on PATH that belongs to one account.
+            assert!(text.ends_with(r"kirie\bin\kirie.exe"), "{text}");
+        } else {
+            assert!(text.ends_with(".local/bin/kirie"), "{text}");
         }
     }
 }

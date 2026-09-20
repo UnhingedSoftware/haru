@@ -125,6 +125,10 @@ mod tests {
             let asset = web.asset();
             if cfg!(target_os = "macos") {
                 assert!(asset.starts_with("kirie-macos-"), "{asset}");
+            } else if cfg!(windows) {
+                // One build, so the variant makes no difference and nothing
+                // names it.
+                assert!(asset.starts_with("kirie-windows-"), "{asset}");
             } else {
                 assert!(
                     asset.contains(web.key().replace("webkit", "webview").as_str()),
