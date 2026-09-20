@@ -114,6 +114,17 @@ impl Default for Renderer {
     }
 }
 
+/// The renderer's volume scale.
+///
+/// haru's slider is 0-100 because that is what a volume slider reads as.
+/// `--volume` and the `volume` socket command are 0-128, with a default of 15.
+/// Converting here rather than at each call site is what keeps the two from
+/// drifting apart -- they had, in three different directions at once.
+#[must_use]
+pub fn kirie_volume(percent: u32) -> u32 {
+    percent.min(100) * 128 / 100
+}
+
 impl Renderer {
     #[must_use]
     pub fn arguments(&self) -> Vec<String> {
@@ -122,9 +133,10 @@ impl Renderer {
         if !gpu.is_empty() && !gpu.eq_ignore_ascii_case("auto") {
             out.push(format!("--gpu={gpu}"));
         }
-        if self.fps > 0 {
-            out.push(format!("--fps={}", self.fps));
-        }
+        // Sent even when it is 0: the slider calls 0 "unlimited" and that is
+        // what `--fps=0` means to the renderer. Leaving the flag off instead
+        // silently gave the renderer's own default of 30.
+        out.push(format!("--fps={}", self.fps));
         if self.battery_fps > 0 {
             out.push(format!("--battery-fps={}", self.battery_fps));
         }
@@ -136,8 +148,12 @@ impl Renderer {
         }
         if self.mute {
             out.push("--silent".to_owned());
-        } else if self.volume != 100 {
-            out.push(format!("--volume={}", self.volume));
+        } else {
+            // Always sent, and on the renderer's scale. The slider is 0-100 and
+            // `--volume` is 0-128 with a default of 15, so leaving the flag off
+            // at 100 used to start the wallpaper at about 12% while the slider
+            // read full.
+            out.push(format!("--volume={}", kirie_volume(self.volume)));
         }
         if self.scaling != Scaling::Default {
             out.push(format!("--scaling={}", self.scaling.flag()));
@@ -166,18 +182,27 @@ impl Renderer {
 
     #[must_use]
     pub fn live_commands(&self) -> Vec<String> {
-        vec![
-            format!("set fps {}", self.fps),
+        let mut out = Vec::new();
+        // `set fps 0` is not "unlimited" on the socket the way `--fps=0` is at
+        // launch: the renderer floors it at 1, which freezes the wallpaper at
+        // one frame a second. Leaving the line out keeps whatever it is
+        // running at, which is what the slider's "unlimited" was asking for.
+        if self.fps > 0 {
+            out.push(format!("set fps {}", self.fps));
+        }
+        out.extend([
             format!("set batteryfps {}", self.battery_fps),
             format!("set renderscale {}", self.render_scale),
             format!("speed {}", self.playback_speed),
-            format!("volume {}", self.volume),
+            // 0-128, the same scale as `--volume` and as docs/COMMANDS.md.
+            format!("volume {}", kirie_volume(self.volume)),
             format!("mute {}", u8::from(self.mute)),
             format!("set disablemouse {}", self.disable_mouse),
             format!("set disableparallax {}", self.disable_parallax),
             format!("set nofullscreenpause {}", self.no_fullscreen_pause),
             format!("set noautomute {}", self.no_automute),
-        ]
+        ]);
+        out
     }
 
     #[must_use]
@@ -251,17 +276,41 @@ mod tests {
     }
 
     #[test]
-    fn an_uncapped_frame_rate_asks_for_nothing() {
+    fn an_uncapped_frame_rate_says_so() {
         let renderer = Renderer {
             fps: 0,
             ..Renderer::default()
         };
+        // `--fps=0` is how the renderer is told to leave the rate alone.
+        // Saying nothing instead gave it its own default of 30, so the slider
+        // labelled "unlimited" quietly capped the wallpaper.
+        assert!(renderer.arguments().contains(&"--fps=0".to_owned()));
+        // The socket is the other way round: `set fps 0` is floored at 1 there,
+        // which would freeze the wallpaper, so the line is left out.
         assert!(
             !renderer
-                .arguments()
+                .live_commands()
                 .iter()
-                .any(|arg| arg.starts_with("--fps"))
+                .any(|line| line.starts_with("set fps"))
         );
+    }
+
+    #[test]
+    fn the_volume_reaches_the_renderer_on_its_own_scale() {
+        let renderer = Renderer::default();
+        assert_eq!(renderer.volume, 100, "the slider is 0-100");
+        // 0-128 is what `--volume` and the `volume` command take. A full slider
+        // used to send nothing at launch, leaving the renderer at its own
+        // default of 15, and then `volume 100` on the socket.
+        assert!(renderer.arguments().contains(&"--volume=128".to_owned()));
+        assert!(renderer.live_commands().contains(&"volume 128".to_owned()));
+
+        let half = Renderer {
+            volume: 50,
+            ..Renderer::default()
+        };
+        assert!(half.arguments().contains(&"--volume=64".to_owned()));
+        assert!(half.live_commands().contains(&"volume 64".to_owned()));
     }
 
     #[test]

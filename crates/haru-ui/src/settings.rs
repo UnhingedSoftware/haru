@@ -623,7 +623,10 @@ impl Settings {
         });
         ui.horizontal(|ui| {
             ui.label("Render scale");
-            ui.add(egui::Slider::new(&mut config.renderer.render_scale, 0.25..=2.0).step_by(0.05))
+            // 0.5 is the floor the renderer clamps `set renderscale` to, so a
+            // smaller number applied on relaunch and then snapped back the
+            // moment Apply sent it live.
+            ui.add(egui::Slider::new(&mut config.renderer.render_scale, 0.5..=2.0).step_by(0.05))
                 .on_hover_text("Below 1.0 draws smaller and scales up: cheaper, softer.");
         });
         ui.horizontal(|ui| {
