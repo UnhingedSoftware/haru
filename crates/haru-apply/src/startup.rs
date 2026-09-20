@@ -12,10 +12,30 @@ const LABEL: &str = "dev.unhingedsoftware.kirie";
 #[must_use]
 #[cfg(windows)]
 pub fn entry() -> Option<PathBuf> {
+    Some(startup_folder()?.join("kirie.vbs"))
+}
+
+#[cfg(windows)]
+fn startup_folder() -> Option<PathBuf> {
     let roaming = std::env::var_os("APPDATA")
         .map(PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())?;
-    Some(roaming.join(r"Microsoft\Windows\Start Menu\Programs\Startup\kirie.cmd"))
+    Some(roaming.join(r"Microsoft\Windows\Start Menu\Programs\Startup"))
+}
+
+/// Startup entries earlier versions left behind, to be swept up.
+///
+/// The wallpaper used to start from a `kirie.cmd` in the same folder. Leaving
+/// one there would put a second renderer up at every login, and `enabled()`
+/// would read the switch as off while it ran.
+#[cfg(windows)]
+fn stale_entries() -> Vec<PathBuf> {
+    startup_folder().map_or_else(Vec::new, |folder| vec![folder.join("kirie.cmd")])
+}
+
+#[cfg(not(windows))]
+fn stale_entries() -> Vec<PathBuf> {
+    Vec::new()
 }
 
 #[must_use]
@@ -55,12 +75,22 @@ pub fn enable(command: &[String], environment: &[(String, String)]) -> Result<()
     };
     std::fs::write(&path, text).map_err(|error| format!("{}: {error}", path.display()))?;
 
+    for stale in stale_entries() {
+        if stale != path {
+            let _ = std::fs::remove_file(&stale);
+        }
+    }
     register(&path);
     Ok(())
 }
 
 pub fn disable() -> Result<(), String> {
     let path = entry().ok_or("no home directory to look in")?;
+    for stale in stale_entries() {
+        if stale != path {
+            let _ = std::fs::remove_file(&stale);
+        }
+    }
     if !path.is_file() {
         return Ok(());
     }
@@ -174,21 +204,50 @@ pub fn unit(command: &[String], environment: &[(String, String)]) -> String {
 
 /// The Startup-folder script Windows runs at login.
 ///
-/// `start ""` hands the renderer off and lets the console window close behind
-/// it; without the empty title, `start` reads the first quoted argument as one.
+/// This is VBScript rather than a `.cmd` because the renderer is a console
+/// program, and there is no way to start one from a batch file without a
+/// console window. `start "" /B` ran it inside the Startup script's own
+/// console, which then stayed on screen and in the taskbar for the whole
+/// session -- and closing it, which is the obvious thing to do with a stray
+/// black window, killed the wallpaper. Plain `start ""` only moves the window
+/// rather than removing it. `WScript.Shell.Run` takes a window style, and 0
+/// means the renderer never gets one; `False` says not to wait for it.
+///
+/// The cost is a dependency on Windows Script Host. It is present and enabled
+/// on every stock Windows install, but an administrator can turn it off by
+/// policy, and then nothing comes up at login.
 #[must_use]
 pub fn script(command: &[String], environment: &[(String, String)]) -> String {
     let variables = environment
         .iter()
-        .map(|(key, value)| format!("set \"{}={}\"\r\n", key, value.replace('"', "")))
+        .map(|(key, value)| {
+            format!(
+                "shell.Environment(\"PROCESS\").Item({}) = {}\r\n",
+                literal(key),
+                literal(value)
+            )
+        })
         .collect::<String>();
+    // The renderer reads this back with the usual Windows rules, so each
+    // argument is quoted. Any quote inside one is dropped: nothing haru passes
+    // contains one, and a half-quoted command line is worse than a lost
+    // character.
     let line = command
         .iter()
         .map(|part| format!("\"{}\"", part.replace('"', "")))
         .collect::<Vec<_>>()
         .join(" ");
 
-    format!("@echo off\r\n{variables}start \"\" /B {line}\r\n")
+    format!(
+        "Set shell = CreateObject(\"WScript.Shell\")\r\n\
+         {variables}shell.Run {}, 0, False\r\n",
+        literal(&line)
+    )
+}
+
+/// `text` as a VBScript string literal, where a quote is written twice.
+fn literal(text: &str) -> String {
+    format!("\"{}\"", text.replace('"', "\"\""))
 }
 
 #[must_use]
@@ -265,10 +324,40 @@ mod tests {
     fn the_startup_script_sets_the_assets_and_lets_go() {
         let (command, environment) = sample();
         let text = script(&command, &environment);
-        assert!(text.contains("set \"KIRIE_WE_ASSETS=/tmp/assets\""));
-        assert!(text.contains("start \"\" /B \"/home/me/.local/bin/kirie\""));
-        assert!(text.contains("\"--bg=/tmp/a wallpaper\""), "{text}");
-        assert!(text.ends_with("\r\n"), "cmd wants CRLF: {text:?}");
+        assert!(
+            text.contains(
+                "shell.Environment(\"PROCESS\").Item(\"KIRIE_WE_ASSETS\") = \"/tmp/assets\""
+            ),
+            "{text}"
+        );
+        // Window style 0, and False for "do not wait": the renderer outlives
+        // the script and never shows a console.
+        assert!(text.contains(", 0, False"), "{text}");
+        assert!(
+            text.contains(
+                "shell.Run \"\"\"/home/me/.local/bin/kirie\"\" \"\"--bg=/tmp/a wallpaper\"\"\", 0, False"
+            ),
+            "{text}"
+        );
+        assert!(
+            !text.contains("start \"\" /B"),
+            "the console window is the bug: {text}"
+        );
+        assert!(
+            text.ends_with("\r\n"),
+            "the script host wants CRLF: {text:?}"
+        );
+    }
+
+    #[test]
+    fn a_quote_in_a_path_cannot_end_the_script_line_early() {
+        let text = script(&[r#"C:\a"b\kirie.exe"#.to_owned()], &[]);
+        // One opening and one closing quote for the VBScript literal, and the
+        // doubled pair that stands for the argument's own quotes.
+        assert!(
+            text.contains("shell.Run \"\"\"C:\\ab\\kirie.exe\"\"\", 0, False"),
+            "{text}"
+        );
     }
 
     #[test]
