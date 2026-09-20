@@ -10,7 +10,24 @@ const PNGS: [(u32, &[u8]); 4] = [
     (256, include_bytes!("../../../packaging/haru-256.png")),
 ];
 
+/// Where this desktop keeps the thing that puts haru in its menus.
+///
+/// macOS wants an app bundle, Linux a `.desktop` file, and Windows an entry in
+/// the Start menu. A real Start-menu shortcut is a `.lnk`, which takes COM to
+/// write; a `.cmd` in the same folder is a plain file, and the menu and the
+/// search box list it just the same. What it does not carry is an icon, so
+/// haru's own icon shows up only once the window is open.
 #[must_use]
+#[cfg(windows)]
+pub fn entry() -> Option<PathBuf> {
+    let roaming = std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())?;
+    Some(roaming.join(r"Microsoft\Windows\Start Menu\Programs\haru.cmd"))
+}
+
+#[must_use]
+#[cfg(unix)]
 pub fn entry() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
     if cfg!(target_os = "macos") {
@@ -33,6 +50,8 @@ pub fn install() -> Result<PathBuf, String> {
 
     if cfg!(target_os = "macos") {
         bundle(&path, &binary)?;
+    } else if cfg!(windows) {
+        shortcut(&path, &binary)?;
     } else {
         launcher(&path, &binary)?;
     }
@@ -52,6 +71,25 @@ pub fn uninstall() -> Result<(), String> {
         std::fs::remove_file(&path)
     }
     .map_err(|error| format!("{}: {error}", path.display()))
+}
+
+fn shortcut(path: &Path, binary: &Path) -> Result<(), String> {
+    let parent = path.parent().ok_or("no Start menu to install into")?;
+    std::fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
+    std::fs::write(path, command_text(binary))
+        .map_err(|error| format!("{}: {error}", path.display()))
+}
+
+/// The one line the Start-menu entry runs.
+///
+/// `start ""` hands haru off and lets the console close behind it; without the
+/// empty title, `start` reads the quoted path as one.
+#[must_use]
+pub fn command_text(binary: &Path) -> String {
+    format!(
+        "@echo off\r\nstart \"\" \"{}\"\r\n",
+        binary.to_string_lossy().replace('"', "")
+    )
 }
 
 fn launcher(path: &Path, binary: &Path) -> Result<(), String> {
@@ -85,7 +123,7 @@ fn icon_root() -> Option<PathBuf> {
 }
 
 fn refresh(applications: &Path) {
-    let _ = std::process::Command::new("update-desktop-database")
+    let _ = crate::child::quiet("update-desktop-database")
         .arg(applications)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -150,7 +188,7 @@ fn icon(resources: &Path) {
             (size, format!("icon_{size}x{size}.png")),
             (size * 2, format!("icon_{size}x{size}@2x.png")),
         ] {
-            let _ = std::process::Command::new("sips")
+            let _ = crate::child::quiet("sips")
                 .args(["-z", &pixels.to_string(), &pixels.to_string()])
                 .arg(&png)
                 .arg("--out")
@@ -161,7 +199,7 @@ fn icon(resources: &Path) {
         }
     }
 
-    let _ = std::process::Command::new("iconutil")
+    let _ = crate::child::quiet("iconutil")
         .args(["-c", "icns"])
         .arg(&iconset)
         .arg("-o")
@@ -222,8 +260,21 @@ mod tests {
         let text = path.to_string_lossy();
         if cfg!(target_os = "macos") {
             assert!(text.ends_with("Applications/haru.app"), "{text}");
+        } else if cfg!(windows) {
+            assert!(text.ends_with(r"Start Menu\Programs\haru.cmd"), "{text}");
         } else {
             assert!(text.ends_with("applications/haru.desktop"), "{text}");
         }
+    }
+
+    #[test]
+    fn the_start_menu_entry_lets_the_console_close() {
+        let text = command_text(Path::new(r"C:\Users\me\haru.exe"));
+        assert!(text.starts_with("@echo off\r\n"), "{text}");
+        assert!(
+            text.contains(r#"start "" "C:\Users\me\haru.exe""#),
+            "{text}"
+        );
+        assert!(text.ends_with("\r\n"), "cmd wants CRLF: {text:?}");
     }
 }

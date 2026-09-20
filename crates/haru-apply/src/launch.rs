@@ -27,9 +27,9 @@ pub fn pid() -> Option<u32> {
         })
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
 pub fn pid() -> Option<u32> {
-    let listed = Command::new("ps")
+    let listed = crate::child::quiet("ps")
         .args(["-Ao", "pid=,comm="])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
@@ -38,12 +38,42 @@ pub fn pid() -> Option<u32> {
     first_kirie(&String::from_utf8_lossy(&listed.stdout))
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
 fn first_kirie(listing: &str) -> Option<u32> {
     listing.lines().find_map(|line| {
         let (pid, command) = line.trim_start().split_once(char::is_whitespace)?;
         let name = command.trim().rsplit('/').next()?;
         (name == "kirie").then(|| pid.parse().ok())?
+    })
+}
+
+/// Windows has no `/proc` and no `ps`, but `tasklist` answers the same
+/// question. Asked for one image name in CSV with no header, it prints one
+/// quoted row per match and the pid is its second field.
+#[cfg(windows)]
+pub fn pid() -> Option<u32> {
+    let listed = crate::child::quiet("tasklist")
+        .args(["/FI", "IMAGENAME eq kirie.exe", "/NH", "/FO", "CSV"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    first_kirie(&String::from_utf8_lossy(&listed.stdout))
+}
+
+#[cfg(windows)]
+fn first_kirie(listing: &str) -> Option<u32> {
+    listing.lines().find_map(|line| {
+        // "kirie.exe","1234","Console","1","52,000 K" -- and, when nothing
+        // matched, a sentence saying so, which has no quoted pid to find.
+        let mut fields = line
+            .split('"')
+            .filter(|field| *field != "," && !field.is_empty());
+        let name = fields.next()?;
+        if !name.eq_ignore_ascii_case("kirie.exe") {
+            return None;
+        }
+        fields.next()?.trim().parse().ok()
     })
 }
 
@@ -174,13 +204,21 @@ fn why_it_never_started() -> String {
         .unwrap_or_default();
 
     if said.is_empty() {
+        let renderer = crate::install::installed()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "the renderer".to_owned());
+        if cfg!(windows) {
+            return format!(
+                "the renderer started and died without saying why. On Windows that is \
+                 usually a graphics driver too old for Vulkan or DirectX 12, or an \
+                 anti-virus holding {renderer} — try running it yourself from a terminal \
+                 to see what it says"
+            );
+        }
         return format!(
             "the renderer started and died without saying why. On macOS that is usually a \
-             broken code signature — reinstall it with `rm -f {0} && cp <build> {0}`, or run \
-             `codesign --force --sign - {0}`",
-            crate::install::installed()
-                .map(|path| path.display().to_string())
-                .unwrap_or_else(|| "the renderer".to_owned())
+             broken code signature — reinstall it with `rm -f {renderer} && cp <build> \
+             {renderer}`, or run `codesign --force --sign - {renderer}`"
         );
     }
     format!("the renderer did not come up: {said}")
@@ -191,9 +229,19 @@ pub fn stop() -> Result<(), String> {
         return Err("no renderer is running".to_owned());
     };
 
-    let sent = Command::new("kill")
-        .arg("-TERM")
-        .arg(pid.to_string())
+    // Windows has no signals to send, and `taskkill` without /F still asks
+    // politely: it posts WM_CLOSE first, which the renderer's own handler takes
+    // as its cue to unlink the socket.
+    let mut stopper = if cfg!(windows) {
+        let mut command = crate::child::quiet("taskkill");
+        command.args(["/PID", &pid.to_string()]);
+        command
+    } else {
+        let mut command = crate::child::quiet("kill");
+        command.args(["-TERM", &pid.to_string()]);
+        command
+    };
+    let sent = stopper
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -226,7 +274,7 @@ pub fn log() -> PathBuf {
 }
 
 fn spawn_detached(binary: &Path, arguments: &[String]) -> Result<(), String> {
-    let mut command = match which("setsid") {
+    let mut command = match setsid() {
         Some(setsid) => {
             let mut wrapper = Command::new(setsid);
             wrapper.arg(binary);
@@ -235,6 +283,16 @@ fn spawn_detached(binary: &Path, arguments: &[String]) -> Result<(), String> {
         None => Command::new(binary),
     };
     command.args(arguments);
+    // What `setsid` does on Linux, this flag does here: the renderer gets no
+    // console of its own, so it outlives haru instead of dying with the window
+    // that started it.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        command.creation_flags(DETACHED_PROCESS | crate::child::NO_WINDOW);
+    }
     for (key, value) in crate::renderer_env() {
         command.env(key, value);
     }
@@ -255,6 +313,17 @@ fn spawn_detached(binary: &Path, arguments: &[String]) -> Result<(), String> {
         .spawn()
         .map(drop)
         .map_err(|error| format!("could not start the renderer ({error})"))
+}
+
+/// `setsid` is a unix program; Windows detaches with a flag instead.
+#[cfg(unix)]
+fn setsid() -> Option<PathBuf> {
+    which("setsid")
+}
+
+#[cfg(windows)]
+const fn setsid() -> Option<PathBuf> {
+    None
 }
 
 pub(crate) fn which(program: &str) -> Option<PathBuf> {
@@ -302,17 +371,38 @@ mod tests {
         );
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     #[test]
     fn the_renderer_is_found_by_its_own_name() {
         let listing = "  501 /usr/sbin/cfprefsd\n  733 /Users/me/.local/bin/kirie\n";
         assert_eq!(super::first_kirie(listing), Some(733));
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     #[test]
     fn something_merely_mentioning_it_is_not_the_renderer() {
         let listing = "  90 /Applications/kirie-helper\n  91 /usr/bin/haru\n";
+        assert_eq!(super::first_kirie(listing), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_renderer_is_found_in_a_tasklist_row() {
+        let listing = "\"kirie.exe\",\"733\",\"Console\",\"1\",\"52,000 K\"\r\n";
+        assert_eq!(super::first_kirie(listing), Some(733));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn tasklist_saying_it_found_nothing_is_not_a_renderer() {
+        let listing = "INFO: No tasks are running which match the specified criteria.\r\n";
+        assert_eq!(super::first_kirie(listing), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn something_merely_mentioning_it_is_not_the_renderer() {
+        let listing = "\"kirie-helper.exe\",\"90\",\"Console\",\"1\",\"8,000 K\"\r\n";
         assert_eq!(super::first_kirie(listing), None);
     }
 

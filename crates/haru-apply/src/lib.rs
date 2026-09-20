@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+mod child;
 pub mod desktop;
 pub mod engine;
 pub mod install;
@@ -7,6 +8,7 @@ mod kirie;
 pub mod launch;
 mod offscreen;
 mod relaunch;
+mod socket;
 pub mod startup;
 mod stream;
 pub mod update;
@@ -55,7 +57,7 @@ pub fn open_link(target: &str) {
     } else {
         ("xdg-open", None)
     };
-    let mut command = std::process::Command::new(program);
+    let mut command = crate::child::quiet(program);
     if let Some(first) = first {
         for part in first.split(' ') {
             command.arg(part);

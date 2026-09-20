@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
 
@@ -36,7 +35,7 @@ impl Offscreen {
         }
         let _ = std::fs::remove_file(out);
 
-        let mut command = Command::new(&self.binary);
+        let mut command = crate::child::quiet(&self.binary);
         command.arg("--bg").arg(dir);
         for (key, value) in properties {
             command.arg("--set-property").arg(format!("{key}={value}"));

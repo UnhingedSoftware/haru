@@ -1,3 +1,8 @@
+// haru is a window, not a command: a release build on Windows should not drag a
+// console along behind it. Debug builds keep theirs, so `eprintln!` still lands
+// somewhere while developing.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use std::process::ExitCode;
 
 use haru_ui::{Haru, Tab};
