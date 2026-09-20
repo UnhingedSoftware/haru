@@ -1,7 +1,7 @@
 name: Release
-# Produces a fully-populated DRAFT release to review and Publish. Kick off from
-# Actions -> Release -> Run workflow (optionally type a version; blank = auto
-# from Conventional Commits).
+# Produces a fully-populated DRAFT release to review and Publish, or a published
+# prerelease if you tick that box. Kick off from Actions -> Release -> Run
+# workflow (optionally type a version; blank = auto from Conventional Commits).
 #
 # One job on purpose. The obvious shape is prepare -> test -> build -> release,
 # passing the changelog and the binary between them as artifacts — and that
@@ -21,6 +21,11 @@ on:
         description: "Version tag, e.g. v0.2.0. Blank = auto-detect from Conventional Commits."
         required: false
         default: ""
+      prerelease:
+        description: "Publish straight away as a prerelease, instead of leaving a draft to review."
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -149,11 +154,16 @@ jobs:
             done
             [ "$uploaded" = 1 ] || { echo "::error::could not upload assets"; exit 1; }
           else
-            echo "creating draft $V"
-            gh release create "$V" --draft --title "$V" --target "$GITHUB_SHA" \
+            # A draft keeps the tag unmade until somebody presses Publish; a
+            # prerelease tags and publishes now, which is what a build meant
+            # for testers wants.
+            state="--draft"
+            if [ "${{ inputs.prerelease }}" = "true" ]; then state="--prerelease"; fi
+            echo "creating $V ($state)"
+            gh release create "$V" "$state" --title "$V" --target "$GITHUB_SHA" \
               --notes-file RELEASE_NOTES.md $files
           fi
-          echo "Draft $V ready."
+          echo "$V ready."
 
   # Windows, uploaded into the draft the job above made. Nothing to build
   # beside it: haru carries no ffmpeg and no shaders, so this is the same
