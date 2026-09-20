@@ -138,6 +138,18 @@ jobs:
           if gh release view "$V" >/dev/null 2>&1; then
             state="$(gh release view "$V" --json isDraft,isPrerelease \
               --jq 'if .isDraft then "--draft" elif .isPrerelease then "--prerelease" else "--latest" end')"
+            # Asking for a prerelease has to mean it even when the release is
+            # already there. A draft left over from an earlier run otherwise
+            # swallows the request: this branch keeps whatever state it finds,
+            # so the run goes green, attaches every asset, and still leaves a
+            # draft nobody can download. Publishing needs --draft=false as well;
+            # --prerelease on its own only sets the flag on a still-unpublished
+            # draft. Nothing here goes the other way: a release that is already
+            # published is never pushed back to a draft.
+            if [ "${{ inputs.prerelease }}" = "true" ] && [ "$state" = "--draft" ]; then
+              echo "release $V is a draft and a prerelease was asked for — publishing it"
+              state="--prerelease --draft=false"
+            fi
             echo "release $V exists ($state) — updating in place"
             gh release edit "$V" $state --title "$V" --notes-file RELEASE_NOTES.md
             # Cleared by name first: a run cancelled mid-upload leaves a
