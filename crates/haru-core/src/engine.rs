@@ -17,13 +17,7 @@ pub fn install_root() -> Option<PathBuf> {
 }
 
 fn data_home() -> Option<PathBuf> {
-    if cfg!(target_os = "macos") {
-        return std::env::var_os("HOME")
-            .map(|home| PathBuf::from(home).join("Library/Application Support"));
-    }
-    std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
+    crate::data_home()
 }
 
 #[must_use]

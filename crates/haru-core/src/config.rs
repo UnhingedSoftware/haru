@@ -45,10 +45,7 @@ impl Default for Config {
 impl Config {
     #[must_use]
     pub fn path() -> Option<PathBuf> {
-        let base = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
-        Some(base.join("haru/config.json"))
+        Some(crate::config_home()?.join("haru/config.json"))
     }
 
     #[must_use]

@@ -12,9 +12,7 @@ pub fn path(id: &str) -> Option<PathBuf> {
     {
         return None;
     }
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
+    let base = crate::config_home()?;
     Some(base.join("haru/overrides").join(format!("{id}.json")))
 }
 
