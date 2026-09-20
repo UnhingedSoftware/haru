@@ -1,9 +1,25 @@
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 const LABEL: &str = "dev.unhingedsoftware.kirie";
 
+/// The file whose existence makes the wallpaper come back at login.
+///
+/// Each desktop has its own idea of what that file is: a launch agent on
+/// macOS, a systemd user unit or an autostart entry on Linux, and on Windows a
+/// script in the Start menu's Startup folder, which needs no registry write
+/// and no shortcut to build.
 #[must_use]
+#[cfg(windows)]
+pub fn entry() -> Option<PathBuf> {
+    let roaming = std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())?;
+    Some(roaming.join(r"Microsoft\Windows\Start Menu\Programs\Startup\kirie.cmd"))
+}
+
+#[must_use]
+#[cfg(unix)]
 pub fn entry() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
     if cfg!(target_os = "macos") {
@@ -28,7 +44,9 @@ pub fn enable(command: &[String], environment: &[(String, String)]) -> Result<()
     let parent = path.parent().ok_or("no directory to install into")?;
     std::fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
 
-    let text = if cfg!(target_os = "macos") {
+    let text = if cfg!(windows) {
+        script(command, environment)
+    } else if cfg!(target_os = "macos") {
         plist(command, environment)
     } else if systemd_user() {
         unit(command, environment)
@@ -83,7 +101,7 @@ fn display(path: &std::path::Path) -> String {
 }
 
 fn run(program: &str, arguments: &[String]) {
-    let _ = Command::new(program)
+    let _ = crate::child::quiet(program)
         .args(arguments)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -154,6 +172,25 @@ pub fn unit(command: &[String], environment: &[(String, String)]) -> String {
     )
 }
 
+/// The Startup-folder script Windows runs at login.
+///
+/// `start ""` hands the renderer off and lets the console window close behind
+/// it; without the empty title, `start` reads the first quoted argument as one.
+#[must_use]
+pub fn script(command: &[String], environment: &[(String, String)]) -> String {
+    let variables = environment
+        .iter()
+        .map(|(key, value)| format!("set \"{}={}\"\r\n", key, value.replace('"', "")))
+        .collect::<String>();
+    let line = command
+        .iter()
+        .map(|part| format!("\"{}\"", part.replace('"', "")))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    format!("@echo off\r\n{variables}start \"\" /B {line}\r\n")
+}
+
 #[must_use]
 pub fn desktop_entry(command: &[String], environment: &[(String, String)]) -> String {
     let exported = environment
@@ -222,6 +259,16 @@ mod tests {
         assert!(text.contains("WantedBy=graphical-session.target"));
         assert!(text.contains("Environment=KIRIE_WE_ASSETS=/tmp/assets"));
         assert!(text.contains("ExecStart=/home/me/.local/bin/kirie \"--bg=/tmp/a wallpaper\""));
+    }
+
+    #[test]
+    fn the_startup_script_sets_the_assets_and_lets_go() {
+        let (command, environment) = sample();
+        let text = script(&command, &environment);
+        assert!(text.contains("set \"KIRIE_WE_ASSETS=/tmp/assets\""));
+        assert!(text.contains("start \"\" /B \"/home/me/.local/bin/kirie\""));
+        assert!(text.contains("\"--bg=/tmp/a wallpaper\""), "{text}");
+        assert!(text.ends_with("\r\n"), "cmd wants CRLF: {text:?}");
     }
 
     #[test]

@@ -22,10 +22,18 @@ pub enum Web {
 }
 
 impl Web {
+    /// The release asset to fetch for this machine.
+    ///
+    /// Only Linux publishes more than one build, because only Linux has two web
+    /// backends to choose between. macOS and Windows publish one each, so the
+    /// flavour makes no difference there.
     #[must_use]
     pub fn asset(self) -> String {
         if cfg!(target_os = "macos") {
             return format!("kirie-macos-{}", machine());
+        }
+        if cfg!(windows) {
+            return format!("kirie-windows-{}.exe", machine());
         }
         match self {
             Self::WebKit => format!("kirie-web-webview-linux-{}", machine()),
@@ -69,7 +77,7 @@ impl Web {
 
     #[must_use]
     pub fn choosable() -> bool {
-        !cfg!(target_os = "macos")
+        !cfg!(target_os = "macos") && !cfg!(windows)
     }
 }
 
@@ -121,27 +129,58 @@ fn library_directories() -> Vec<PathBuf> {
     directories
 }
 
+/// What the renderer is called once it is on disk.
+#[cfg(windows)]
+pub(crate) const RENDERER: &str = "kirie.exe";
+#[cfg(not(windows))]
+pub(crate) const RENDERER: &str = "kirie";
+
 #[must_use]
 pub fn installed() -> Option<PathBuf> {
     if let Some(set) = std::env::var_os("KIRIE_BINARY") {
         let path = PathBuf::from(set);
         return path.is_file().then_some(path);
     }
+    places().into_iter().find(|path| path.is_file())
+}
+
+/// Everywhere the renderer might already be, best guess first.
+#[cfg(unix)]
+fn places() -> Vec<PathBuf> {
     let mut places = Vec::new();
     if let Some(home) = std::env::var_os("HOME") {
-        places.push(PathBuf::from(home).join(".local/bin/kirie"));
+        places.push(PathBuf::from(home).join(".local/bin").join(RENDERER));
     }
-    places.push(PathBuf::from("/usr/local/bin/kirie"));
-    places.push(PathBuf::from("/usr/bin/kirie"));
-    if let Some(paths) = std::env::var_os("PATH") {
-        places.extend(std::env::split_paths(&paths).map(|dir| dir.join("kirie")));
-    }
-    places.into_iter().find(|path| path.is_file())
+    places.push(PathBuf::from("/usr/local/bin").join(RENDERER));
+    places.push(PathBuf::from("/usr/bin").join(RENDERER));
+    places.extend(on_the_path());
+    places
+}
+
+/// Windows has no `~/.local/bin`, so the only place haru puts the renderer is
+/// the one [`destination`] names. Somebody who installed it themselves is found
+/// on `PATH`, the same as anywhere else.
+#[cfg(windows)]
+fn places() -> Vec<PathBuf> {
+    let mut places = Vec::new();
+    places.extend(destination());
+    places.extend(on_the_path());
+    places
+}
+
+fn on_the_path() -> Vec<PathBuf> {
+    std::env::var_os("PATH")
+        .map(|paths| {
+            std::env::split_paths(&paths)
+                .map(|dir| dir.join(RENDERER))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[must_use]
 pub fn version_of(binary: &Path) -> Option<String> {
-    let spoke = std::process::Command::new(binary)
+    let spoke = crate::child::quiet(binary)
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .output()
@@ -153,15 +192,28 @@ pub fn version_of(binary: &Path) -> Option<String> {
         .filter(|version| !version.is_empty())
 }
 
+/// Where the renderer is installed to.
+///
+/// Unix puts it on the path the user already has; Windows has no such place,
+/// so it goes beside the socket and the rest of kirie's own state, under
+/// `%LOCALAPPDATA%`.
 #[must_use]
+#[cfg(unix)]
 pub fn destination() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/bin/kirie"))
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/bin").join(RENDERER))
+}
+
+#[must_use]
+#[cfg(windows)]
+pub fn destination() -> Option<PathBuf> {
+    Some(haru_core::runtime_dir().join("bin").join(RENDERER))
 }
 
 #[must_use]
 pub const fn supported() -> bool {
     cfg!(any(
         all(target_os = "linux", target_arch = "x86_64"),
+        all(windows, target_arch = "x86_64"),
         target_os = "macos"
     ))
 }
@@ -217,7 +269,7 @@ pub fn graphics_cards() -> Vec<Card> {
     let Some(binary) = installed() else {
         return Vec::new();
     };
-    let Ok(out) = std::process::Command::new(binary)
+    let Ok(out) = crate::child::quiet(binary)
         .args(["gpus", "--json"])
         .output()
     else {
@@ -356,8 +408,7 @@ pub fn fetch(
     let outcome = write(response, build, &staged, progress);
     match outcome {
         Ok(()) => {
-            std::fs::rename(&staged, target)
-                .map_err(|error| format!("could not put it in place ({error})"))?;
+            put_in_place(&staged, target)?;
             Ok(target.to_path_buf())
         }
         Err(error) => {
@@ -365,6 +416,30 @@ pub fn fetch(
             Err(error)
         }
     }
+}
+
+/// Move the finished download onto the binary it replaces.
+///
+/// Unix can rename over a program that is running: the copy already running
+/// holds the old inode and lives on. Windows locks the file it is executing, so
+/// the old one is renamed aside first, which Windows does allow, and swept up
+/// by the next update, once nothing has it open any more.
+#[cfg(unix)]
+fn put_in_place(staged: &Path, target: &Path) -> Result<(), String> {
+    std::fs::rename(staged, target).map_err(|error| format!("could not put it in place ({error})"))
+}
+
+#[cfg(windows)]
+fn put_in_place(staged: &Path, target: &Path) -> Result<(), String> {
+    let stale = target.with_extension("old");
+    let _ = std::fs::remove_file(&stale);
+    let moved = std::fs::rename(target, &stale).is_ok();
+    std::fs::rename(staged, target).map_err(|error| {
+        if moved {
+            let _ = std::fs::rename(&stale, target);
+        }
+        format!("could not put it in place ({error})")
+    })
 }
 
 fn write(
@@ -519,10 +594,33 @@ mod tests {
             assert!(asset.starts_with("kirie-macos-"), "{asset}");
             assert_eq!(Web::WebKit.asset(), Web::Cef.asset());
             assert!(!Web::choosable());
+        } else if cfg!(windows) {
+            assert!(asset.starts_with("kirie-windows-"), "{asset}");
+            assert!(asset.ends_with(".exe"), "{asset}");
+            assert_eq!(Web::WebKit.asset(), Web::Cef.asset());
+            assert!(!Web::choosable());
         } else {
             assert!(asset.contains("linux"), "{asset}");
             assert_ne!(Web::WebKit.asset(), Web::Cef.asset());
         }
+    }
+
+    // Whatever haru asks for has to be a name the release actually carries,
+    // and whatever it downloads has to land somewhere it can then run.
+    #[test]
+    fn the_installed_renderer_is_runnable_here() {
+        if !supported() {
+            return;
+        }
+        let Some(path) = destination() else {
+            return;
+        };
+        assert_eq!(
+            path.extension().is_some_and(|ext| ext == "exe"),
+            cfg!(windows),
+            "{}",
+            path.display()
+        );
     }
 
     #[test]
@@ -574,9 +672,15 @@ mod tests {
     }
 
     #[test]
-    fn an_install_goes_under_the_home_directory() {
-        if let Some(target) = destination() {
-            assert!(target.ends_with(".local/bin/kirie"), "{}", target.display());
+    fn an_install_goes_where_this_os_keeps_its_programs() {
+        let Some(target) = destination() else { return };
+        let text = target.to_string_lossy();
+        if cfg!(windows) {
+            // Beside the socket and the rest of kirie's state, since Windows
+            // has no directory on PATH that belongs to one account.
+            assert!(text.ends_with(r"kirie\bin\kirie.exe"), "{text}");
+        } else {
+            assert!(text.ends_with(".local/bin/kirie"), "{text}");
         }
     }
 }

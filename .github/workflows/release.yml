@@ -1,7 +1,7 @@
 name: Release
-# Produces a fully-populated DRAFT release to review and Publish. Kick off from
-# Actions -> Release -> Run workflow (optionally type a version; blank = auto
-# from Conventional Commits).
+# Produces a fully-populated DRAFT release to review and Publish, or a published
+# prerelease if you tick that box. Kick off from Actions -> Release -> Run
+# workflow (optionally type a version; blank = auto from Conventional Commits).
 #
 # One job on purpose. The obvious shape is prepare -> test -> build -> release,
 # passing the changelog and the binary between them as artifacts — and that
@@ -11,9 +11,9 @@ name: Release
 # Artifact: one standalone executable — download, chmod +x, run.
 #   haru-linux-x86_64
 #
-# macOS artifacts are built by a second job on GitHub-hosted runners, which
-# uploads straight into the draft this one creates — no CI artifact storage in
-# the middle. No Windows build yet.
+# macOS and Windows artifacts are built by two more jobs on GitHub-hosted
+# runners, which upload straight into the draft this one creates — no CI
+# artifact storage in the middle.
 on:
   workflow_dispatch:
     inputs:
@@ -21,6 +21,11 @@ on:
         description: "Version tag, e.g. v0.2.0. Blank = auto-detect from Conventional Commits."
         required: false
         default: ""
+      prerelease:
+        description: "Publish straight away as a prerelease, instead of leaving a draft to review."
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -112,6 +117,7 @@ jobs:
           | `haru-desktop-linux.tar.gz` | desktop entry and icons: `tar xf`, then `packaging/install.sh ./haru-linux-x86_64` |
           | `haru-macos-aarch64.dmg` | macOS: open it and drag haru into Applications |
           | `haru-macos-aarch64` | the same app as a bare binary, for a terminal |
+          | `haru-windows-x86_64.exe` | Windows 10 1809 or newer: download and run |
 
           macOS will say it "could not verify haru.app". These builds are
           ad-hoc signed only, with no Apple Developer ID and no notarization,
@@ -148,11 +154,65 @@ jobs:
             done
             [ "$uploaded" = 1 ] || { echo "::error::could not upload assets"; exit 1; }
           else
-            echo "creating draft $V"
-            gh release create "$V" --draft --title "$V" --target "$GITHUB_SHA" \
+            # A draft keeps the tag unmade until somebody presses Publish; a
+            # prerelease tags and publishes now, which is what a build meant
+            # for testers wants.
+            state="--draft"
+            if [ "${{ inputs.prerelease }}" = "true" ]; then state="--prerelease"; fi
+            echo "creating $V ($state)"
+            gh release create "$V" "$state" --title "$V" --target "$GITHUB_SHA" \
               --notes-file RELEASE_NOTES.md $files
           fi
-          echo "Draft $V ready."
+          echo "$V ready."
+
+  # Windows, uploaded into the draft the job above made. Nothing to build
+  # beside it: haru carries no ffmpeg and no shaders, so this is the same
+  # `cargo build` the other platforms run, with `.exe` on the end of the name
+  # because Windows will not run a file without one — and because that is what
+  # haru's own updater asks GitHub for.
+  windows:
+    needs: release
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      V: ${{ needs.release.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: haru-windows-x86_64
+
+      - name: Set crate version
+        run: |
+          set -euo pipefail
+          v="${V#v}"
+          sed -i -E "0,/^version = \"[0-9]+\.[0-9]+\.[0-9]+\"/s//version = \"$v\"/" Cargo.toml
+
+      - run: cargo build --release -p haru
+
+      - name: Stage the binary
+        run: |
+          set -euo pipefail
+          cp target/release/haru.exe haru-windows-x86_64.exe
+          ls -la haru-windows-x86_64.exe
+
+      - name: Upload into the draft
+        run: |
+          set -euo pipefail
+          file=haru-windows-x86_64.exe
+          gh release delete-asset "$V" "$file" --yes 2>/dev/null || true
+          for attempt in 1 2 3; do
+            if gh release upload "$V" "$file" --clobber; then exit 0; fi
+            echo "upload attempt $attempt failed; retrying in 20s"
+            sleep 20
+          done
+          echo "::error::could not upload the Windows asset"; exit 1
 
   # macOS artifacts, uploaded into the draft the job above made. GitHub-hosted
   # runners: the self-hosted ones are Linux.

@@ -37,3 +37,32 @@ jobs:
 
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # The port to Windows is only a port while something checks it. haru pulls in
+  # no ffmpeg and no shaders, so the whole workspace cross-compiles on the same
+  # runner in about the time the Linux lint takes, and that is enough to catch
+  # the regression that matters: a `std::os::unix` import creeping back in.
+  windows:
+    name: Windows cross-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@v2
+
+      # Some build scripts compile C for the target.
+      - name: Install the mingw toolchain
+        run: sudo apt-get update && sudo apt-get install -y mingw-w64
+
+      - name: Cross-check the workspace
+        env:
+          CC_x86_64_pc_windows_gnu: x86_64-w64-mingw32-gcc
+          CXX_x86_64_pc_windows_gnu: x86_64-w64-mingw32-g++
+          AR_x86_64_pc_windows_gnu: x86_64-w64-mingw32-ar
+          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc
+        run: cargo clippy --workspace --all-targets --target x86_64-pc-windows-gnu -- -D warnings

@@ -349,6 +349,7 @@ mod tests {
 /// unlink the first one's socket under the sticky bit. This must stay in step
 /// with kirie's own `default_control_socket`.
 #[must_use]
+#[cfg(unix)]
 pub fn runtime_dir() -> std::path::PathBuf {
     if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
         return std::path::PathBuf::from(runtime);
@@ -361,15 +362,32 @@ pub fn runtime_dir() -> std::path::PathBuf {
     dir
 }
 
+/// Windows has no `XDG_RUNTIME_DIR` and no mode bits, but `%LOCALAPPDATA%` is
+/// already a directory only this account can write to.
+#[cfg(windows)]
+#[must_use]
+pub fn runtime_dir() -> std::path::PathBuf {
+    let dir = match std::env::var_os("LOCALAPPDATA").filter(|value| !value.is_empty()) {
+        Some(local) => std::path::PathBuf::from(local).join("kirie"),
+        None => std::env::temp_dir().join(format!("kirie-{}", user_tag())),
+    };
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
 fn user_tag() -> String {
-    use std::os::unix::fs::MetadataExt;
-    if let Some(home) = std::env::var_os("HOME")
-        && let Ok(meta) = std::fs::metadata(&home)
+    #[cfg(unix)]
     {
-        return meta.uid().to_string();
+        use std::os::unix::fs::MetadataExt;
+        if let Some(home) = std::env::var_os("HOME")
+            && let Ok(meta) = std::fs::metadata(&home)
+        {
+            return meta.uid().to_string();
+        }
     }
     std::env::var("USER")
         .or_else(|_| std::env::var("LOGNAME"))
+        .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "shared".to_owned())
 }
 

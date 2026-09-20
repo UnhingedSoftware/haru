@@ -24,9 +24,19 @@ pub fn system() -> &'static str {
     }
 }
 
+/// The release file this machine's haru updates itself from.
+///
+/// `EXE_SUFFIX` is what makes the Windows build `haru-windows-x86_64.exe`:
+/// Windows will not run a file it cannot see an extension on, and the release
+/// workflow publishes it under that name.
 #[must_use]
 pub fn haru_asset() -> String {
-    format!("haru-{}-{}", system(), std::env::consts::ARCH)
+    format!(
+        "haru-{}-{}{}",
+        system(),
+        std::env::consts::ARCH,
+        std::env::consts::EXE_SUFFIX
+    )
 }
 
 #[must_use]
@@ -115,6 +125,10 @@ mod tests {
             let asset = web.asset();
             if cfg!(target_os = "macos") {
                 assert!(asset.starts_with("kirie-macos-"), "{asset}");
+            } else if cfg!(windows) {
+                // One build, so the variant makes no difference and nothing
+                // names it.
+                assert!(asset.starts_with("kirie-windows-"), "{asset}");
             } else {
                 assert!(
                     asset.contains(web.key().replace("webkit", "webview").as_str()),
@@ -183,5 +197,6 @@ mod tests {
         if cfg!(target_os = "macos") {
             assert!(asset.contains("macos"), "{asset}");
         }
+        assert!(asset.ends_with(std::env::consts::EXE_SUFFIX), "{asset}");
     }
 }

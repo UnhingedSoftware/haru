@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
 
@@ -36,7 +35,7 @@ impl Offscreen {
         }
         let _ = std::fs::remove_file(out);
 
-        let mut command = Command::new(&self.binary);
+        let mut command = crate::child::quiet(&self.binary);
         command.arg("--bg").arg(dir);
         for (key, value) in properties {
             command.arg("--set-property").arg(format!("{key}={value}"));
@@ -104,20 +103,14 @@ fn strip_log_prefix(line: &str) -> String {
         .map_or(cleaned.clone(), |(_, message)| message.trim().to_owned())
 }
 
+/// The renderer to take a screenshot with, when the caller named none.
+///
+/// This used to walk `~/.local/bin` and `/usr/bin` itself, which found nothing
+/// on Windows. `install::installed` already knows every place the renderer can
+/// be on this platform, `KIRIE_BINARY` and `PATH` included, so ask it; the bare
+/// name is the last resort, and leaves `available()` false.
 fn find_kirie() -> PathBuf {
-    if let Some(home) = std::env::var_os("HOME") {
-        let local = PathBuf::from(&home).join(".local/bin/kirie");
-        if local.is_file() {
-            return local;
-        }
-    }
-    for path in ["/usr/local/bin/kirie", "/usr/bin/kirie"] {
-        let candidate = PathBuf::from(path);
-        if candidate.is_file() {
-            return candidate;
-        }
-    }
-    PathBuf::from("kirie")
+    crate::install::installed().unwrap_or_else(|| PathBuf::from(crate::install::RENDERER))
 }
 
 #[cfg(test)]

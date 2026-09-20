@@ -1,8 +1,8 @@
 use std::io::{BufRead as _, BufReader, Write as _};
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::socket::UnixStream;
 use crate::{Backend, Screen};
 
 const DEADLINE: Duration = Duration::from_secs(20);

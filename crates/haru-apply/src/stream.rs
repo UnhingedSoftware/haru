@@ -1,8 +1,9 @@
 use std::io::{Read, Write};
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::Child;
 use std::time::{Duration, Instant};
+
+use crate::socket::UnixStream;
 
 const HEADER_BYTES: usize = 24;
 
@@ -41,7 +42,7 @@ impl Preview {
         let socket = socket_path();
         let _ = std::fs::remove_file(&socket);
 
-        let mut child = Command::new(binary)
+        let mut child = crate::child::quiet(binary)
             .arg("preview")
             .arg("--socket")
             .arg(&socket)
