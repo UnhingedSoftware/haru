@@ -30,6 +30,12 @@ impl Kirie {
         stream.set_read_timeout(Some(DEADLINE)).ok();
         stream.set_write_timeout(Some(DEADLINE)).ok();
 
+        // The protocol is one command per line, and a property value is
+        // whatever the wallpaper's author typed -- a text property or a saved
+        // override can hold a newline. Sent as it is, that cut the command in
+        // half and left the rest to be parsed as another one. Folding the
+        // breaks to spaces here covers every command rather than each caller.
+        let line = line.replace(['\n', '\r'], " ");
         let mut writing = &stream;
         writeln!(writing, "{line}").map_err(|error| format!("write failed ({error})"))?;
         writing.flush().ok();
