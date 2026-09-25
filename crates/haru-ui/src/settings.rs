@@ -468,9 +468,13 @@ impl Settings {
 
         ui.add_space(6.0);
         ui.label(
-            RichText::new("Control socket — blank uses $XDG_RUNTIME_DIR/lwe.sock")
-                .small()
-                .color(theme::MUTED),
+            RichText::new(if cfg!(windows) {
+                "Control socket — blank uses %LOCALAPPDATA%\\kirie\\lwe.sock"
+            } else {
+                "Control socket — blank uses $XDG_RUNTIME_DIR/lwe.sock"
+            })
+            .small()
+            .color(theme::MUTED),
         );
         if ui
             .add(
