@@ -69,10 +69,7 @@ impl Backend for Relaunch {
                 .and_then(|showing| showing.clone())
                 .filter(|_| launch::running())
         });
-        Ok(vec![Screen {
-            name: DESKTOP.to_owned(),
-            current,
-        }])
+        Ok(vec![Screen::new(DESKTOP, current)])
     }
 
     fn apply(&self, screen: &str, dir: &Path) -> Result<(), String> {

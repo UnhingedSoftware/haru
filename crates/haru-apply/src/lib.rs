@@ -6,6 +6,7 @@ pub mod engine;
 pub mod install;
 mod kirie;
 pub mod launch;
+mod monitors;
 mod offscreen;
 mod relaunch;
 mod socket;
@@ -27,8 +28,24 @@ pub use stream::{Frame, Preview as PreviewStream};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Screen {
+    /// What the renderer calls it, and what commands to it must use.
     pub name: String,
+    /// What to show a person: the monitor's own name where the system has
+    /// one, since Windows' `DISPLAY6` says nothing about which screen it is.
+    pub label: String,
     pub current: Option<PathBuf>,
+}
+
+impl Screen {
+    #[must_use]
+    pub fn new(name: impl Into<String>, current: Option<PathBuf>) -> Self {
+        let name = name.into();
+        Self {
+            label: name.clone(),
+            name,
+            current,
+        }
+    }
 }
 
 pub trait Backend: Send + Sync {

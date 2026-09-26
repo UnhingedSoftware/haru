@@ -11,6 +11,10 @@ rust-version.workspace = true
 name = "haru"
 path = "src/main.rs"
 
+[build-dependencies]
+# Puts the icon into haru.exe, where Explorer and the taskbar look for it.
+embed-resource = "3"
+
 [dependencies]
 eframe = { workspace = true }
 egui = { workspace = true }

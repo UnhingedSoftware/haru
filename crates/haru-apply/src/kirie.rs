@@ -66,10 +66,10 @@ impl Backend for Kirie {
             .filter_map(|line| {
                 let rest = line.strip_prefix("screen=")?;
                 let (name, background) = rest.split_once(" bg=")?;
-                Some(Screen {
-                    name: name.to_owned(),
-                    current: (!background.is_empty()).then(|| PathBuf::from(background)),
-                })
+                Some(Screen::new(
+                    name,
+                    (!background.is_empty()).then(|| PathBuf::from(background)),
+                ))
             })
             .collect())
     }

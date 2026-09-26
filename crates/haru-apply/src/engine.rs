@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::launch::Plan;
-use crate::{Backend, Screen, install, launch};
+use crate::{Backend, Screen, install, launch, monitors};
 
 const POLL: Duration = Duration::from_millis(900);
 
@@ -218,11 +218,12 @@ fn start(
 
 fn poll(engine: &dyn Backend, shared: &Arc<Mutex<Snapshot>>) {
     let available = engine.available();
-    let screens = if available {
+    let mut screens = if available {
         engine.screens().unwrap_or_default()
     } else {
         Vec::new()
     };
+    monitors::label(&mut screens);
     let pid = launch::pid();
     let binary = install::installed();
     let connectors = if cfg!(target_os = "linux") || screens.is_empty() {
@@ -272,10 +273,7 @@ mod tests {
         if cfg!(target_os = "linux") {
             return;
         }
-        let engine = Reporting(vec![Screen {
-            name: "Built-in Retina Display".to_owned(),
-            current: None,
-        }]);
+        let engine = Reporting(vec![Screen::new("Built-in Retina Display", None)]);
         let shared = Arc::new(Mutex::new(Snapshot::default()));
         poll(&engine, &shared);
         let seen = shared.lock().map(|held| held.clone()).unwrap_or_default();

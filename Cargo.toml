@@ -45,6 +45,7 @@ image = { version = "0.25", default-features = false, features = [
 ] }
 qrcode = { version = "0.14", default-features = false }
 rfd = { version = "0.15", default-features = false }
+display-info = "0.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync"] }

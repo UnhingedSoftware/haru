@@ -141,10 +141,7 @@ impl Library {
         self.screens = seen.screens;
         for name in seen.connectors {
             if !self.screens.iter().any(|screen| screen.name == name) {
-                self.screens.push(Screen {
-                    name,
-                    current: None,
-                });
+                self.screens.push(Screen::new(name, None));
             }
         }
         if self
@@ -346,9 +343,9 @@ impl Library {
                                 for screen in &self.screens {
                                     let here = screen.current.as_deref() == Some(&item.dir);
                                     let label = if here {
-                                        format!("On {}", screen.name)
+                                        format!("On {}", screen.label)
                                     } else {
-                                        format!("Put up on {}", screen.name)
+                                        format!("Put up on {}", screen.label)
                                     };
                                     if ui.add_enabled(!here, egui::Button::new(label)).clicked() {
                                         apply = Some((screen.name.clone(), item.dir.clone()));
