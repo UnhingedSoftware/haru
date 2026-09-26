@@ -74,7 +74,15 @@ fn load_fonts(ctx: &egui::Context) {
 pub fn apply(ctx: &egui::Context) {
     load_fonts(ctx);
 
-    let mut style = (*ctx.style()).clone();
+    // haru is dark only. egui keeps a separate style per theme and, by
+    // default, follows the system's: on Windows in light mode it switched to
+    // its stock light style on the first frame, which painted light buttons,
+    // checkboxes and fields with haru's light text on them, and dark headings
+    // on haru's dark panels. Linux rarely reports a theme, so it never showed.
+    ctx.set_theme(egui::Theme::Dark);
+    ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(egui::SystemTheme::Dark));
+
+    let mut style = (*ctx.style_of(egui::Theme::Dark)).clone();
     let visuals = &mut style.visuals;
 
     *visuals = egui::Visuals::dark();
@@ -133,7 +141,10 @@ pub fn apply(ctx: &egui::Context) {
     style.spacing.scroll.bar_width = 8.0;
     style.spacing.combo_height = 360.0;
 
-    ctx.set_style(style);
+    // The light slot gets the same style, so nothing can bring egui's back.
+    let style = std::sync::Arc::new(style);
+    ctx.set_style_of(egui::Theme::Dark, style.clone());
+    ctx.set_style_of(egui::Theme::Light, style);
 }
 
 pub fn card(rounding: f32) -> egui::Frame {

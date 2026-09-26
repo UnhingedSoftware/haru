@@ -336,10 +336,16 @@ impl Haru {
             self.restart_prompt(ui);
             if !screens.is_empty() {
                 ui.add_space(10.0);
-                let chosen = self
-                    .library
-                    .target()
-                    .map_or_else(|| "Screen".to_owned(), str::to_owned);
+                let chosen = self.library.target().map_or_else(
+                    || "Screen".to_owned(),
+                    |target| {
+                        screens
+                            .iter()
+                            .find(|screen| screen.name == target)
+                            .map_or(target, |screen| screen.label.as_str())
+                            .to_owned()
+                    },
+                );
                 egui::ComboBox::from_id_salt("screen")
                     .selected_text(chosen)
                     .width(160.0)
@@ -351,8 +357,10 @@ impl Haru {
                                 .as_ref()
                                 .and_then(|dir| self.library.title_of(dir))
                                 .unwrap_or_else(|| "nothing".to_owned());
-                            let response = ui
-                                .selectable_label(picked, format!("{}  ·  {showing}", screen.name));
+                            let response = ui.selectable_label(
+                                picked,
+                                format!("{}  ·  {showing}", screen.label),
+                            );
                             if response.clicked() {
                                 self.library.set_target(screen.name.clone());
                             }

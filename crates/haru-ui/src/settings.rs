@@ -484,7 +484,7 @@ impl Settings {
         if ui
             .add(
                 egui::TextEdit::singleline(&mut self.socket)
-                    .hint_text("/run/user/1000/lwe.sock")
+                    .hint_text(haru_apply::default_socket().display().to_string())
                     .desired_width(420.0),
             )
             .lost_focus()
@@ -508,7 +508,7 @@ impl Settings {
             let names: Vec<&str> = engine
                 .screens
                 .iter()
-                .map(|screen| screen.name.as_str())
+                .map(|screen| screen.label.as_str())
                 .collect();
             if !names.is_empty() {
                 ui.add_space(2.0);

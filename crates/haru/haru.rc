@@ -1,0 +1,3 @@
+// The first icon in the executable is the one Explorer, the taskbar and the
+// Start menu show. The window's own icon is set separately, at run time.
+1 ICON "../../packaging/haru.ico"
