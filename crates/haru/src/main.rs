@@ -3,6 +3,8 @@
 // somewhere while developing.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod failure;
+
 use std::process::ExitCode;
 
 use haru_ui::{Haru, Tab};
@@ -76,13 +78,12 @@ fn parse(arguments: &[String]) -> Result<Opened, String> {
 }
 
 fn main() -> ExitCode {
+    failure::record_panics();
+
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let opened = match parse(&arguments) {
         Ok(opened) => opened,
-        Err(message) => {
-            eprintln!("haru: {message}");
-            return ExitCode::FAILURE;
-        }
+        Err(message) => return failure::report(&message),
     };
 
     let mut viewport = egui::ViewportBuilder::default()
@@ -97,30 +98,36 @@ fn main() -> ExitCode {
 
     let options = eframe::NativeOptions {
         viewport,
+        // The backend is left to wgpu (Vulkan, then OpenGL; `WGPU_BACKEND`
+        // overrides it). Asking for DX12 alone found no adapter at all,
+        // because eframe builds wgpu without its DX12 backend, and the window
+        // never opened.
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
             present_mode: present_mode(),
             desired_maximum_frame_latency: Some(2),
-            supported_backends: backends(),
             ..eframe::egui_wgpu::WgpuConfiguration::default()
         },
         ..eframe::NativeOptions::default()
     };
 
-    match eframe::run_native(
-        "haru",
-        options,
-        Box::new(move |cc| {
-            haru_ui::theme::apply(&cc.egui_ctx);
-            Ok(Box::new(App {
-                haru: Haru::opening_on_item(opened.tab, opened.search, opened.item),
-            }))
-        }),
-    ) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("haru: {error}");
-            ExitCode::FAILURE
-        }
+    // winit carries a panic in the event loop out of `run_native`, so catching
+    // it here reports it after the window is gone rather than inside it.
+    let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        eframe::run_native(
+            "haru",
+            options,
+            Box::new(move |cc| {
+                haru_ui::theme::apply(&cc.egui_ctx);
+                Ok(Box::new(App {
+                    haru: Haru::opening_on_item(opened.tab, opened.search, opened.item),
+                }))
+            }),
+        )
+    }));
+    match ran {
+        Ok(Ok(())) => ExitCode::SUCCESS,
+        Ok(Err(error)) => failure::report(&failure::window_error(&error)),
+        Err(_) => failure::panicked(),
     }
 }
 
@@ -132,18 +139,6 @@ fn present_mode() -> eframe::wgpu::PresentMode {
         eframe::wgpu::PresentMode::AutoVsync
     } else {
         eframe::wgpu::PresentMode::AutoNoVsync
-    }
-}
-
-// Left to itself, wgpu takes the first adapter that answers among Vulkan, DX12
-// and WGL, so which renderer haru got depended on the driver, and the Vulkan
-// and GL paths are where egui draws wrong on Windows. DX12 is on every Windows
-// 10 machine haru supports. `WGPU_BACKEND` still overrides this for testing.
-fn backends() -> eframe::wgpu::Backends {
-    if cfg!(windows) {
-        eframe::wgpu::util::backend_bits_from_env().unwrap_or(eframe::wgpu::Backends::DX12)
-    } else {
-        eframe::egui_wgpu::WgpuConfiguration::default().supported_backends
     }
 }
 
