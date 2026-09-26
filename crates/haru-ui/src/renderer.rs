@@ -24,13 +24,16 @@ enum Note {
 pub enum Outcome {
     Nothing,
     Dismissed,
-    Installed(Web),
+    /// Installed, with the flavour and whether it was a beta, so the updater
+    /// keeps following the channel the user picked here.
+    Installed(Web, bool),
 }
 
 pub struct Installer {
     open: bool,
     web: Web,
     webkit: bool,
+    betas: bool,
     phase: Phase,
     notes: Option<Receiver<Note>>,
 }
@@ -49,12 +52,16 @@ impl Installer {
             open: false,
             web: if webkit { Web::WebKit } else { Web::Cef },
             webkit,
+            betas: false,
             phase: Phase::Choosing,
             notes: None,
         }
     }
 
-    pub fn offer(&mut self) {
+    /// Opens the prompt. `betas` is where the beta choice starts, which is
+    /// whatever the updater is already set to follow.
+    pub fn offer(&mut self, betas: bool) {
+        self.betas = betas;
         self.open = true;
         self.phase = Phase::Choosing;
     }
@@ -105,11 +112,14 @@ impl Installer {
                     });
                 });
                 ui.add_space(2.0);
+                let into = install::destination()
+                    .and_then(|path| path.parent().map(|dir| dir.display().to_string()))
+                    .unwrap_or_else(|| "your user folder".to_owned());
                 ui.label(
-                    RichText::new(
+                    RichText::new(format!(
                         "Wallpapers are drawn by kirie, and this machine does not have it. \
-                         haru can fetch the latest release into ~/.local/bin.",
-                    )
+                         haru can fetch the latest release into {into}."
+                    ))
                     .small()
                     .color(theme::MUTED),
                 );
@@ -124,7 +134,7 @@ impl Installer {
         if close {
             self.open = false;
             outcome = match self.phase {
-                Phase::Done(_) => Outcome::Installed(self.web),
+                Phase::Done(_) => Outcome::Installed(self.web, self.betas),
                 _ => Outcome::Dismissed,
             };
         }
@@ -191,6 +201,36 @@ impl Installer {
     }
 
     fn choices(&mut self, ui: &mut egui::Ui) -> bool {
+        // Only Linux publishes two builds to choose between; macOS and Windows
+        // get the one their release carries whichever card is picked.
+        if cfg!(target_os = "linux") {
+            self.flavours(ui);
+        }
+
+        ui.add_space(2.0);
+        ui.checkbox(&mut self.betas, "Install the beta")
+            .on_hover_text(
+                "Takes the newest pre-release instead of the newest stable release, \
+                 and keeps updating to betas afterwards. Change this later in Settings.",
+            );
+
+        ui.add_space(8.0);
+        let mut start = false;
+        ui.horizontal(|ui| {
+            if ui
+                .add_sized([200.0, 32.0], egui::Button::new("Install kirie"))
+                .clicked()
+            {
+                start = true;
+            }
+            if ui.button("Not now").clicked() {
+                self.open = false;
+            }
+        });
+        start
+    }
+
+    fn flavours(&mut self, ui: &mut egui::Ui) {
         let found = self.webkit;
         for (web, note) in [
             (
@@ -231,31 +271,22 @@ impl Installer {
             }
             ui.add_space(6.0);
         }
-
-        ui.add_space(8.0);
-        let mut start = false;
-        ui.horizontal(|ui| {
-            if ui
-                .add_sized([200.0, 32.0], egui::Button::new("Install kirie"))
-                .clicked()
-            {
-                start = true;
-            }
-            if ui.button("Not now").clicked() {
-                self.open = false;
-            }
-        });
-        start
     }
 
     fn start(&mut self, ctx: &egui::Context) {
         let (notes, heard) = channel();
         let web = self.web;
+        let betas = self.betas;
         let ctx = ctx.clone();
         let spawned = std::thread::Builder::new()
             .name("haru-install".to_owned())
             .spawn(move || {
-                let build = match install::latest(web) {
+                let newest = if betas {
+                    install::latest_including_betas(web)
+                } else {
+                    install::latest(web)
+                };
+                let build = match newest {
                     Ok(build) => build,
                     Err(why) => {
                         let _ = notes.send(Note::Failed(why));
@@ -338,8 +369,17 @@ mod tests {
     fn offering_it_starts_at_the_choice() {
         let mut installer = Installer::new();
         installer.phase = Phase::Failed("earlier".to_owned());
-        installer.offer();
+        installer.offer(false);
         assert!(installer.is_open());
         assert!(matches!(installer.phase, Phase::Choosing));
+    }
+
+    #[test]
+    fn the_beta_choice_starts_where_the_updater_is() {
+        let mut installer = Installer::new();
+        installer.offer(true);
+        assert!(installer.betas);
+        installer.offer(false);
+        assert!(!installer.betas);
     }
 }

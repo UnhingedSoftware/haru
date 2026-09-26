@@ -127,7 +127,7 @@ impl Haru {
             && haru_apply::install::supported()
             && haru_apply::install::installed().is_none()
         {
-            installer.offer();
+            installer.offer(config.beta);
         }
 
         Self {
@@ -450,8 +450,9 @@ impl Haru {
 
     fn overlays(&mut self, ctx: &egui::Context) {
         match self.installer.ui(ctx) {
-            crate::renderer::Outcome::Installed(web) => {
+            crate::renderer::Outcome::Installed(web, betas) => {
                 self.config.renderer_web = Some(web.key().to_owned());
+                self.config.beta = betas;
                 let _ = self.config.save();
                 self.engine = Engine::spawn(self.config.socket.clone());
             }
@@ -490,7 +491,7 @@ impl Haru {
             self.account.open();
         }
         if asked.install && !self.updates.busy() {
-            self.installer.offer();
+            self.installer.offer(self.config.beta);
         }
         if asked.fetch_assets && self.assets_request.is_none() {
             self.assets_tried = true;
@@ -653,7 +654,7 @@ impl Haru {
                 return;
             }
             self.library.say("no renderer installed yet");
-            self.installer.offer();
+            self.installer.offer(self.config.beta);
             return;
         }
 
