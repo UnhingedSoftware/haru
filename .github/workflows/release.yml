@@ -146,12 +146,19 @@ jobs:
             # --prerelease on its own only sets the flag on a still-unpublished
             # draft. Nothing here goes the other way: a release that is already
             # published is never pushed back to a draft.
+            #
+            # A draft has no tag yet: Publish makes it from the draft's target.
+            # Rebuilding a draft from a newer commit has to move the target
+            # too, or Publish tags the commit before the change while the
+            # binaries were built after it.
+            target=""
+            if [ "$state" = "--draft" ]; then target="--target $GITHUB_SHA"; fi
             if [ "${{ inputs.prerelease }}" = "true" ] && [ "$state" = "--draft" ]; then
               echo "release $V is a draft and a prerelease was asked for — publishing it"
               state="--prerelease --draft=false"
             fi
             echo "release $V exists ($state) — updating in place"
-            gh release edit "$V" $state --title "$V" --notes-file RELEASE_NOTES.md
+            gh release edit "$V" $state $target --title "$V" --notes-file RELEASE_NOTES.md
             # Cleared by name first: a run cancelled mid-upload leaves a
             # half-created asset, and the API then answers 400 for a fresh
             # upload of that name rather than replacing it.
