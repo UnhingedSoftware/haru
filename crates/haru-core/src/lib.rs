@@ -362,6 +362,65 @@ pub fn runtime_dir() -> std::path::PathBuf {
     dir
 }
 
+/// Where this account's settings live.
+///
+/// Windows sets none of the XDG variables and does not set `HOME` either
+/// outside MSYS or Git Bash, so asking only for those found nothing and haru
+/// had nowhere to keep a config file: every setting the user changed was lost
+/// when the app closed. `%APPDATA%` is the directory Windows means by this.
+#[must_use]
+#[cfg(windows)]
+pub fn config_home() -> Option<std::path::PathBuf> {
+    directory("APPDATA").or_else(|| under_the_profile("AppData\\Roaming"))
+}
+
+#[must_use]
+#[cfg(not(windows))]
+pub fn config_home() -> Option<std::path::PathBuf> {
+    directory("XDG_CONFIG_HOME").or_else(|| under_the_home(".config"))
+}
+
+/// Where this account's downloaded data lives -- the Wallpaper Engine assets
+/// and the wallpapers haru installs itself.
+///
+/// The same gap as `config_home`: without this, `install_root()` came back
+/// `None` on Windows, the assets could never be installed, and scene
+/// wallpapers could never render.
+#[must_use]
+#[cfg(windows)]
+pub fn data_home() -> Option<std::path::PathBuf> {
+    directory("LOCALAPPDATA").or_else(|| under_the_profile("AppData\\Local"))
+}
+
+#[must_use]
+#[cfg(target_os = "macos")]
+pub fn data_home() -> Option<std::path::PathBuf> {
+    under_the_home("Library/Application Support")
+}
+
+#[must_use]
+#[cfg(all(unix, not(target_os = "macos")))]
+pub fn data_home() -> Option<std::path::PathBuf> {
+    directory("XDG_DATA_HOME").or_else(|| under_the_home(".local/share"))
+}
+
+/// The directory a variable names, or nothing when it is unset or empty.
+fn directory(variable: &str) -> Option<std::path::PathBuf> {
+    std::env::var_os(variable)
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from)
+}
+
+#[cfg(windows)]
+fn under_the_profile(tail: &str) -> Option<std::path::PathBuf> {
+    Some(directory("USERPROFILE")?.join(tail))
+}
+
+#[cfg(unix)]
+fn under_the_home(tail: &str) -> Option<std::path::PathBuf> {
+    Some(directory("HOME")?.join(tail))
+}
+
 /// Windows has no `XDG_RUNTIME_DIR` and no mode bits, but `%LOCALAPPDATA%` is
 /// already a directory only this account can write to.
 #[cfg(windows)]

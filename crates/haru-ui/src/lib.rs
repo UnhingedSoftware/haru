@@ -5,6 +5,7 @@ mod library;
 mod preview;
 mod props;
 mod renderer;
+mod runtime;
 mod settings;
 pub mod theme;
 mod tile;

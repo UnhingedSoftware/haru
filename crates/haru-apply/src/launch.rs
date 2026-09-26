@@ -139,12 +139,26 @@ impl Plan {
     }
 }
 
+/// Whether the renderer is told which screen this wallpaper belongs on.
+///
+/// `DESKTOP` is haru's stand-in for "wherever the renderer puts things", used
+/// when nothing has reported the real screens yet. The renderer has never
+/// heard of it, and `--screen-root Desktop` matches no output, which leaves
+/// the desktop bare. Every other name came from the renderer itself.
+fn is_a_real_screen(name: &str) -> bool {
+    name != DESKTOP
+}
+
 #[must_use]
 pub fn arguments_for(socket: &Path, plan: &[Plan]) -> Vec<String> {
     let mut arguments = vec![format!("--control-socket={}", socket.display())];
     arguments.extend(haru_core::Config::load().renderer.arguments());
     for screen in plan {
-        if cfg!(target_os = "linux") {
+        // Sent on every platform. It used to be Linux-only, so on Windows and
+        // macOS the name was dropped and one `--bg` covered every monitor at
+        // once: assigning a wallpaper to the second screen quietly changed
+        // both, and the other screen's wallpaper was never passed at all.
+        if is_a_real_screen(&screen.screen) {
             arguments.push(format!("--screen-root={}", screen.screen));
         }
         if let Some(wallpaper) = screen
@@ -229,12 +243,20 @@ pub fn stop() -> Result<(), String> {
         return Err("no renderer is running".to_owned());
     };
 
-    // Windows has no signals to send, and `taskkill` without /F still asks
-    // politely: it posts WM_CLOSE first, which the renderer's own handler takes
-    // as its cue to unlink the socket.
+    // Windows has no signals to send. `taskkill` without `/F` asks politely by
+    // posting WM_CLOSE to the target's top-level windows, and the renderer has
+    // none: its only window is a WS_CHILD parented into Explorer's desktop, so
+    // taskkill finds nothing to ask and exits non-zero with "this process can
+    // only be terminated forcefully". That turned every Stop -- and so every
+    // Restart, which stops first -- into "the renderer refused to stop".
+    //
+    // Nothing is lost by going straight to `/F`: the renderer removes a socket
+    // file left at its path before it binds, so a hard kill self-heals, and it
+    // has no other state to write on the way out. `/T` takes the web host with
+    // it, which would otherwise be left without a parent.
     let mut stopper = if cfg!(windows) {
         let mut command = crate::child::quiet("taskkill");
-        command.args(["/PID", &pid.to_string()]);
+        command.args(["/PID", &pid.to_string(), "/T", "/F"]);
         command
     } else {
         let mut command = crate::child::quiet("kill");
@@ -427,6 +449,48 @@ mod tests {
         for name in connectors() {
             assert!(!name.starts_with("card"), "{name}");
         }
+    }
+
+    #[test]
+    fn every_screen_in_the_plan_is_named_to_the_renderer() {
+        let plan = [
+            Plan::showing("DISPLAY1", "/tmp/one"),
+            Plan::showing("DISPLAY2", "/tmp/two"),
+        ];
+        let arguments = arguments_for(Path::new("/tmp/kirie.sock"), &plan);
+        // Paired, and in order: the renderer reads each --bg as belonging to
+        // the --screen-root before it.
+        let paired: Vec<&String> = arguments
+            .iter()
+            .filter(|arg| arg.starts_with("--screen-root=") || arg.starts_with("--bg="))
+            .collect();
+        assert_eq!(
+            paired,
+            vec![
+                "--screen-root=DISPLAY1",
+                "--bg=/tmp/one",
+                "--screen-root=DISPLAY2",
+                "--bg=/tmp/two",
+            ],
+            "{arguments:?}"
+        );
+    }
+
+    #[test]
+    fn the_stand_in_screen_is_not_named_to_the_renderer() {
+        // `Desktop` is haru's own word for "wherever the renderer puts
+        // things", used before anything has reported the real screens. The
+        // renderer matches no output by that name and would show nothing.
+        let plan = [Plan::showing(DESKTOP, "/tmp/one")];
+        let arguments = arguments_for(Path::new("/tmp/kirie.sock"), &plan);
+        assert!(
+            !arguments.iter().any(|arg| arg.starts_with("--screen-root")),
+            "{arguments:?}"
+        );
+        assert!(
+            arguments.contains(&"--bg=/tmp/one".to_owned()),
+            "{arguments:?}"
+        );
     }
 
     #[test]

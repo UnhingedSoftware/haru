@@ -127,7 +127,7 @@ impl Haru {
             && haru_apply::install::supported()
             && haru_apply::install::installed().is_none()
         {
-            installer.offer();
+            installer.offer(config.beta);
         }
 
         Self {
@@ -450,8 +450,9 @@ impl Haru {
 
     fn overlays(&mut self, ctx: &egui::Context) {
         match self.installer.ui(ctx) {
-            crate::renderer::Outcome::Installed(web) => {
+            crate::renderer::Outcome::Installed(web, betas) => {
                 self.config.renderer_web = Some(web.key().to_owned());
+                self.config.beta = betas;
                 let _ = self.config.save();
                 self.engine = Engine::spawn(self.config.socket.clone());
             }
@@ -490,7 +491,7 @@ impl Haru {
             self.account.open();
         }
         if asked.install && !self.updates.busy() {
-            self.installer.offer();
+            self.installer.offer(self.config.beta);
         }
         if asked.fetch_assets && self.assets_request.is_none() {
             self.assets_tried = true;
@@ -579,21 +580,13 @@ impl Haru {
         haru_apply::startup::enable(&command, &environment).err()
     }
 
+    /// What the login entry should put up, one line per screen.
+    ///
+    /// This used to keep only the first screen on Windows and macOS, so a
+    /// second monitor came back bare at every login even though the renderer
+    /// there takes a screen name like any other.
     fn current_plan(&self) -> Vec<haru_apply::launch::Plan> {
         let seen = self.engine.snapshot();
-        if !cfg!(target_os = "linux") {
-            return seen
-                .screens
-                .into_iter()
-                .filter_map(|found| {
-                    let wallpaper = found.current?;
-                    wallpaper
-                        .is_dir()
-                        .then(|| haru_apply::launch::Plan::showing(found.name, wallpaper))
-                })
-                .take(1)
-                .collect();
-        }
         seen.screens
             .into_iter()
             .filter_map(|found| {
@@ -607,10 +600,13 @@ impl Haru {
             .collect()
     }
 
+    /// The whole desktop as the renderer should see it after this change.
+    ///
+    /// Starting the renderer replaces everything it was showing, so the plan
+    /// has to carry the screens that are not changing as well as the one that
+    /// is. Windows and macOS used to send only the changed screen, which left
+    /// the others with nothing on them.
     fn plan_for(&self, screen: &str, dir: &std::path::Path) -> Vec<haru_apply::launch::Plan> {
-        if !cfg!(target_os = "linux") {
-            return vec![haru_apply::launch::Plan::showing(screen, dir)];
-        }
         let mut names: Vec<String> = Vec::new();
         let mut showing: Vec<(String, std::path::PathBuf)> = Vec::new();
 
@@ -658,7 +654,7 @@ impl Haru {
                 return;
             }
             self.library.say("no renderer installed yet");
-            self.installer.offer();
+            self.installer.offer(self.config.beta);
             return;
         }
 

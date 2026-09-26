@@ -7,7 +7,21 @@ use std::process::ExitCode;
 
 use haru_ui::{Haru, Tab};
 
-const INITIAL: [f32; 2] = [1280.0, 820.0];
+// A 1080p laptop at Windows' default 150% scaling has 1280x720 logical pixels,
+// less the taskbar, so 820 tall put the paging bar and the bottom of the grid
+// off the screen before the user had touched anything.
+const INITIAL: [f32; 2] = if cfg!(windows) {
+    [1120.0, 660.0]
+} else {
+    [1280.0, 820.0]
+};
+
+// Only a compositor that blends the window's alpha makes the translucent
+// backdrop worth asking for. On Windows the DX12 and Vulkan swapchains only
+// offer an opaque surface, so winit's blur-behind is all the request buys, and
+// that is what left black or white flashes and garbage along the edges while
+// resizing.
+const TRANSPARENT: bool = !cfg!(windows);
 
 const APP_ID: &str = "haru";
 
@@ -76,7 +90,7 @@ fn main() -> ExitCode {
         .with_min_inner_size([720.0, 480.0])
         .with_title("haru")
         .with_app_id(APP_ID)
-        .with_transparent(true);
+        .with_transparent(TRANSPARENT);
     if let Some(icon) = icon() {
         viewport = viewport.with_icon(icon);
     }
@@ -84,8 +98,9 @@ fn main() -> ExitCode {
     let options = eframe::NativeOptions {
         viewport,
         wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
-            present_mode: eframe::wgpu::PresentMode::AutoNoVsync,
+            present_mode: present_mode(),
             desired_maximum_frame_latency: Some(2),
+            supported_backends: backends(),
             ..eframe::egui_wgpu::WgpuConfiguration::default()
         },
         ..eframe::NativeOptions::default()
@@ -109,6 +124,29 @@ fn main() -> ExitCode {
     }
 }
 
+// Without vsync, a Windows swapchain presents immediately and tears whenever
+// the window goes full-screen-ish and DWM hands it the flip. Wayland and macOS
+// compositors sync regardless, so they keep the lower latency.
+fn present_mode() -> eframe::wgpu::PresentMode {
+    if cfg!(windows) {
+        eframe::wgpu::PresentMode::AutoVsync
+    } else {
+        eframe::wgpu::PresentMode::AutoNoVsync
+    }
+}
+
+// Left to itself, wgpu takes the first adapter that answers among Vulkan, DX12
+// and WGL, so which renderer haru got depended on the driver, and the Vulkan
+// and GL paths are where egui draws wrong on Windows. DX12 is on every Windows
+// 10 machine haru supports. `WGPU_BACKEND` still overrides this for testing.
+fn backends() -> eframe::wgpu::Backends {
+    if cfg!(windows) {
+        eframe::wgpu::util::backend_bits_from_env().unwrap_or(eframe::wgpu::Backends::DX12)
+    } else {
+        eframe::egui_wgpu::WgpuConfiguration::default().supported_backends
+    }
+}
+
 struct App {
     haru: Haru,
 }
@@ -124,7 +162,11 @@ impl eframe::App for App {
             f32::from(backdrop.r()) / 255.0,
             f32::from(backdrop.g()) / 255.0,
             f32::from(backdrop.b()) / 255.0,
-            f32::from(backdrop.a()) / 255.0,
+            if TRANSPARENT {
+                f32::from(backdrop.a()) / 255.0
+            } else {
+                1.0
+            },
         ]
     }
 }

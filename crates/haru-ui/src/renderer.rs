@@ -10,13 +10,15 @@ use crate::theme;
 enum Phase {
     Choosing,
     Working(u64, u64),
-    Done(PathBuf),
+    /// Installed, and anything that went wrong on the side: the WebView2
+    /// Runtime failing to install does not undo a good kirie install.
+    Done(PathBuf, Option<String>),
     Failed(String),
 }
 
 enum Note {
     Progress(u64, u64),
-    Done(PathBuf),
+    Done(PathBuf, Option<String>),
     Failed(String),
 }
 
@@ -24,13 +26,21 @@ enum Note {
 pub enum Outcome {
     Nothing,
     Dismissed,
-    Installed(Web),
+    /// Installed, with the flavour and whether it was a beta, so the updater
+    /// keeps following the channel the user picked here.
+    Installed(Web, bool),
 }
 
 pub struct Installer {
     open: bool,
     web: Web,
     webkit: bool,
+    betas: bool,
+    /// Whether web wallpapers' runtime is missing here, which only Windows
+    /// asks: `None` until the prompt is first offered.
+    webview_missing: Option<bool>,
+    /// Whether to install it along with kirie.
+    webview: bool,
     phase: Phase,
     notes: Option<Receiver<Note>>,
 }
@@ -49,12 +59,21 @@ impl Installer {
             open: false,
             web: if webkit { Web::WebKit } else { Web::Cef },
             webkit,
+            betas: false,
+            webview_missing: None,
+            webview: true,
             phase: Phase::Choosing,
             notes: None,
         }
     }
 
-    pub fn offer(&mut self) {
+    /// Opens the prompt. `betas` is where the beta choice starts, which is
+    /// whatever the updater is already set to follow.
+    pub fn offer(&mut self, betas: bool) {
+        self.betas = betas;
+        if haru_apply::webview2::needed() && self.webview_missing.is_none() {
+            self.webview_missing = Some(haru_apply::webview2::installed().is_none());
+        }
         self.open = true;
         self.phase = Phase::Choosing;
     }
@@ -105,11 +124,14 @@ impl Installer {
                     });
                 });
                 ui.add_space(2.0);
+                let into = install::destination()
+                    .and_then(|path| path.parent().map(|dir| dir.display().to_string()))
+                    .unwrap_or_else(|| "your user folder".to_owned());
                 ui.label(
-                    RichText::new(
+                    RichText::new(format!(
                         "Wallpapers are drawn by kirie, and this machine does not have it. \
-                         haru can fetch the latest release into ~/.local/bin.",
-                    )
+                         haru can fetch the latest release into {into}."
+                    ))
                     .small()
                     .color(theme::MUTED),
                 );
@@ -124,7 +146,7 @@ impl Installer {
         if close {
             self.open = false;
             outcome = match self.phase {
-                Phase::Done(_) => Outcome::Installed(self.web),
+                Phase::Done(..) => Outcome::Installed(self.web, self.betas),
                 _ => Outcome::Dismissed,
             };
         }
@@ -153,10 +175,21 @@ impl Installer {
                         .color(theme::MUTED),
                 );
             }
-            Phase::Done(path) => {
+            Phase::Done(path, aside) => {
                 ui.label(
                     RichText::new(format!("Installed to {}", path.display())).color(theme::ACCENT),
                 );
+                if let Some(aside) = aside {
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(format!(
+                            "Web wallpapers will not run yet: {aside}. Settings › Renderer can \
+                             try again."
+                        ))
+                        .small()
+                        .color(theme::DANGER),
+                    );
+                }
                 ui.add_space(4.0);
                 ui.label(
                     RichText::new(
@@ -191,6 +224,50 @@ impl Installer {
     }
 
     fn choices(&mut self, ui: &mut egui::Ui) -> bool {
+        // Only Linux publishes two builds to choose between; macOS and Windows
+        // get the one their release carries whichever card is picked.
+        if cfg!(target_os = "linux") {
+            self.flavours(ui);
+        }
+
+        if self.webview_missing == Some(true) {
+            ui.add_space(2.0);
+            ui.checkbox(
+                &mut self.webview,
+                "Also install WebView2, for web wallpapers",
+            )
+            .on_hover_text(
+                "Web wallpapers run in the Microsoft Edge WebView2 Runtime, which this \
+                     machine does not have. haru downloads Microsoft's installer, checks it \
+                     is signed by Microsoft, and Windows asks for administrator permission \
+                     before it runs.",
+            );
+        }
+
+        ui.add_space(2.0);
+        ui.checkbox(&mut self.betas, "Install the beta")
+            .on_hover_text(
+                "Takes the newest pre-release instead of the newest stable release, \
+                 and keeps updating to betas afterwards. Change this later in Settings.",
+            );
+
+        ui.add_space(8.0);
+        let mut start = false;
+        ui.horizontal(|ui| {
+            if ui
+                .add_sized([200.0, 32.0], egui::Button::new("Install kirie"))
+                .clicked()
+            {
+                start = true;
+            }
+            if ui.button("Not now").clicked() {
+                self.open = false;
+            }
+        });
+        start
+    }
+
+    fn flavours(&mut self, ui: &mut egui::Ui) {
         let found = self.webkit;
         for (web, note) in [
             (
@@ -231,31 +308,23 @@ impl Installer {
             }
             ui.add_space(6.0);
         }
-
-        ui.add_space(8.0);
-        let mut start = false;
-        ui.horizontal(|ui| {
-            if ui
-                .add_sized([200.0, 32.0], egui::Button::new("Install kirie"))
-                .clicked()
-            {
-                start = true;
-            }
-            if ui.button("Not now").clicked() {
-                self.open = false;
-            }
-        });
-        start
     }
 
     fn start(&mut self, ctx: &egui::Context) {
         let (notes, heard) = channel();
         let web = self.web;
+        let betas = self.betas;
+        let webview = self.webview && self.webview_missing == Some(true);
         let ctx = ctx.clone();
         let spawned = std::thread::Builder::new()
             .name("haru-install".to_owned())
             .spawn(move || {
-                let build = match install::latest(web) {
+                let newest = if betas {
+                    install::latest_including_betas(web)
+                } else {
+                    install::latest(web)
+                };
+                let build = match newest {
                     Ok(build) => build,
                     Err(why) => {
                         let _ = notes.send(Note::Failed(why));
@@ -274,7 +343,11 @@ impl Installer {
                     return;
                 };
                 let note = match install::fetch(&build, &target, &mut report) {
-                    Ok(path) => Note::Done(path),
+                    Ok(path) if webview => {
+                        let aside = haru_apply::webview2::install(&mut report).err();
+                        Note::Done(path, aside)
+                    }
+                    Ok(path) => Note::Done(path, None),
                     Err(why) => Note::Failed(why),
                 };
                 let _ = notes.send(note);
@@ -297,8 +370,11 @@ impl Installer {
         while let Ok(note) = notes.try_recv() {
             match note {
                 Note::Progress(done, total) => self.phase = Phase::Working(done, total),
-                Note::Done(path) => {
-                    self.phase = Phase::Done(path);
+                Note::Done(path, aside) => {
+                    if aside.is_none() {
+                        self.webview_missing = self.webview_missing.map(|_| false);
+                    }
+                    self.phase = Phase::Done(path, aside);
                     finished = true;
                 }
                 Note::Failed(why) => {
@@ -338,8 +414,17 @@ mod tests {
     fn offering_it_starts_at_the_choice() {
         let mut installer = Installer::new();
         installer.phase = Phase::Failed("earlier".to_owned());
-        installer.offer();
+        installer.offer(false);
         assert!(installer.is_open());
         assert!(matches!(installer.phase, Phase::Choosing));
+    }
+
+    #[test]
+    fn the_beta_choice_starts_where_the_updater_is() {
+        let mut installer = Installer::new();
+        installer.offer(true);
+        assert!(installer.betas);
+        installer.offer(false);
+        assert!(!installer.betas);
     }
 }

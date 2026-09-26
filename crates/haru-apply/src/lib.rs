@@ -12,6 +12,7 @@ mod socket;
 pub mod startup;
 mod stream;
 pub mod update;
+pub mod webview2;
 
 pub use engine::{Engine, Snapshot};
 pub use kirie::Kirie;
@@ -49,22 +50,24 @@ pub trait Backend: Send + Sync {
     }
 }
 
+/// Hand a URL or a directory to whatever the desktop opens it with.
+///
+/// The Windows arm used to be `cmd /C start "" <target>`. Rust only quotes an
+/// argument on Windows when it contains a space, so a URL went to `cmd`
+/// unquoted and `cmd` read the first `&` in it as a command separator: the
+/// Steam browser sign-in link, which ends `...&redir_ssl=1`, opened truncated
+/// and the sign-in did not work. `explorer` takes the target as one argument
+/// with no shell in between, and opens `https:`, `steam:` and plain
+/// directories all the same way.
 pub fn open_link(target: &str) {
-    let (program, first) = if cfg!(target_os = "macos") {
-        ("open", None)
+    let program = if cfg!(target_os = "macos") {
+        "open"
     } else if cfg!(target_os = "windows") {
-        ("cmd", Some("/C start"))
+        "explorer"
     } else {
-        ("xdg-open", None)
+        "xdg-open"
     };
-    let mut command = crate::child::quiet(program);
-    if let Some(first) = first {
-        for part in first.split(' ') {
-            command.arg(part);
-        }
-        command.arg("");
-    }
-    let _ = command.arg(target).spawn();
+    let _ = crate::child::quiet(program).arg(target).spawn();
 }
 
 #[must_use]

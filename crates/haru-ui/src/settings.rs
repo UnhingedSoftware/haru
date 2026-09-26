@@ -108,6 +108,7 @@ pub struct Settings {
     library: String,
     status: String,
     cards: Option<Vec<haru_apply::install::Card>>,
+    web_runtime: crate::runtime::WebRuntime,
 }
 
 impl Settings {
@@ -368,6 +369,10 @@ impl Settings {
         ui.add_space(6.0);
         Self::as_application(ui, actions);
         ui.add_space(6.0);
+        if haru_apply::webview2::needed() {
+            self.web_runtime.ui(ui);
+            ui.add_space(6.0);
+        }
 
         match (engine.available, engine.pid) {
             (true, _) => Self::running(ui, engine, actions),
@@ -468,9 +473,13 @@ impl Settings {
 
         ui.add_space(6.0);
         ui.label(
-            RichText::new("Control socket — blank uses $XDG_RUNTIME_DIR/lwe.sock")
-                .small()
-                .color(theme::MUTED),
+            RichText::new(if cfg!(windows) {
+                "Control socket — blank uses %LOCALAPPDATA%\\kirie\\lwe.sock"
+            } else {
+                "Control socket — blank uses $XDG_RUNTIME_DIR/lwe.sock"
+            })
+            .small()
+            .color(theme::MUTED),
         );
         if ui
             .add(
@@ -623,7 +632,10 @@ impl Settings {
         });
         ui.horizontal(|ui| {
             ui.label("Render scale");
-            ui.add(egui::Slider::new(&mut config.renderer.render_scale, 0.25..=2.0).step_by(0.05))
+            // 0.5 is the floor the renderer clamps `set renderscale` to, so a
+            // smaller number applied on relaunch and then snapped back the
+            // moment Apply sent it live.
+            ui.add(egui::Slider::new(&mut config.renderer.render_scale, 0.5..=2.0).step_by(0.05))
                 .on_hover_text("Below 1.0 draws smaller and scales up: cheaper, softer.");
         });
         ui.horizontal(|ui| {
