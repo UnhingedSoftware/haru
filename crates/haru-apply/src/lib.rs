@@ -12,6 +12,7 @@ mod socket;
 pub mod startup;
 mod stream;
 pub mod update;
+pub mod webview2;
 
 pub use engine::{Engine, Snapshot};
 pub use kirie::Kirie;

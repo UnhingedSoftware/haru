@@ -10,13 +10,15 @@ use crate::theme;
 enum Phase {
     Choosing,
     Working(u64, u64),
-    Done(PathBuf),
+    /// Installed, and anything that went wrong on the side: the WebView2
+    /// Runtime failing to install does not undo a good kirie install.
+    Done(PathBuf, Option<String>),
     Failed(String),
 }
 
 enum Note {
     Progress(u64, u64),
-    Done(PathBuf),
+    Done(PathBuf, Option<String>),
     Failed(String),
 }
 
@@ -34,6 +36,11 @@ pub struct Installer {
     web: Web,
     webkit: bool,
     betas: bool,
+    /// Whether web wallpapers' runtime is missing here, which only Windows
+    /// asks: `None` until the prompt is first offered.
+    webview_missing: Option<bool>,
+    /// Whether to install it along with kirie.
+    webview: bool,
     phase: Phase,
     notes: Option<Receiver<Note>>,
 }
@@ -53,6 +60,8 @@ impl Installer {
             web: if webkit { Web::WebKit } else { Web::Cef },
             webkit,
             betas: false,
+            webview_missing: None,
+            webview: true,
             phase: Phase::Choosing,
             notes: None,
         }
@@ -62,6 +71,9 @@ impl Installer {
     /// whatever the updater is already set to follow.
     pub fn offer(&mut self, betas: bool) {
         self.betas = betas;
+        if haru_apply::webview2::needed() && self.webview_missing.is_none() {
+            self.webview_missing = Some(haru_apply::webview2::installed().is_none());
+        }
         self.open = true;
         self.phase = Phase::Choosing;
     }
@@ -134,7 +146,7 @@ impl Installer {
         if close {
             self.open = false;
             outcome = match self.phase {
-                Phase::Done(_) => Outcome::Installed(self.web, self.betas),
+                Phase::Done(..) => Outcome::Installed(self.web, self.betas),
                 _ => Outcome::Dismissed,
             };
         }
@@ -163,10 +175,21 @@ impl Installer {
                         .color(theme::MUTED),
                 );
             }
-            Phase::Done(path) => {
+            Phase::Done(path, aside) => {
                 ui.label(
                     RichText::new(format!("Installed to {}", path.display())).color(theme::ACCENT),
                 );
+                if let Some(aside) = aside {
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(format!(
+                            "Web wallpapers will not run yet: {aside}. Settings › Renderer can \
+                             try again."
+                        ))
+                        .small()
+                        .color(theme::DANGER),
+                    );
+                }
                 ui.add_space(4.0);
                 ui.label(
                     RichText::new(
@@ -205,6 +228,20 @@ impl Installer {
         // get the one their release carries whichever card is picked.
         if cfg!(target_os = "linux") {
             self.flavours(ui);
+        }
+
+        if self.webview_missing == Some(true) {
+            ui.add_space(2.0);
+            ui.checkbox(
+                &mut self.webview,
+                "Also install WebView2, for web wallpapers",
+            )
+            .on_hover_text(
+                "Web wallpapers run in the Microsoft Edge WebView2 Runtime, which this \
+                     machine does not have. haru downloads Microsoft's installer, checks it \
+                     is signed by Microsoft, and Windows asks for administrator permission \
+                     before it runs.",
+            );
         }
 
         ui.add_space(2.0);
@@ -277,6 +314,7 @@ impl Installer {
         let (notes, heard) = channel();
         let web = self.web;
         let betas = self.betas;
+        let webview = self.webview && self.webview_missing == Some(true);
         let ctx = ctx.clone();
         let spawned = std::thread::Builder::new()
             .name("haru-install".to_owned())
@@ -305,7 +343,11 @@ impl Installer {
                     return;
                 };
                 let note = match install::fetch(&build, &target, &mut report) {
-                    Ok(path) => Note::Done(path),
+                    Ok(path) if webview => {
+                        let aside = haru_apply::webview2::install(&mut report).err();
+                        Note::Done(path, aside)
+                    }
+                    Ok(path) => Note::Done(path, None),
                     Err(why) => Note::Failed(why),
                 };
                 let _ = notes.send(note);
@@ -328,8 +370,11 @@ impl Installer {
         while let Ok(note) = notes.try_recv() {
             match note {
                 Note::Progress(done, total) => self.phase = Phase::Working(done, total),
-                Note::Done(path) => {
-                    self.phase = Phase::Done(path);
+                Note::Done(path, aside) => {
+                    if aside.is_none() {
+                        self.webview_missing = self.webview_missing.map(|_| false);
+                    }
+                    self.phase = Phase::Done(path, aside);
                     finished = true;
                 }
                 Note::Failed(why) => {

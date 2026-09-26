@@ -108,6 +108,7 @@ pub struct Settings {
     library: String,
     status: String,
     cards: Option<Vec<haru_apply::install::Card>>,
+    web_runtime: crate::runtime::WebRuntime,
 }
 
 impl Settings {
@@ -368,6 +369,10 @@ impl Settings {
         ui.add_space(6.0);
         Self::as_application(ui, actions);
         ui.add_space(6.0);
+        if haru_apply::webview2::needed() {
+            self.web_runtime.ui(ui);
+            ui.add_space(6.0);
+        }
 
         match (engine.available, engine.pid) {
             (true, _) => Self::running(ui, engine, actions),

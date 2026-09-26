@@ -7,7 +7,7 @@ const MAX_BYTES: u64 = 256 * 1024 * 1024;
 
 const DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 
-const AGENT: &str = concat!("haru/", env!("CARGO_PKG_VERSION"));
+pub(crate) const AGENT: &str = concat!("haru/", env!("CARGO_PKG_VERSION"));
 
 const WEBKIT: [&str; 3] = [
     "libwebkit2gtk-4.1.so.0",
