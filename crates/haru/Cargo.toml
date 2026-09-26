@@ -14,8 +14,14 @@ path = "src/main.rs"
 [dependencies]
 eframe = { workspace = true }
 egui = { workspace = true }
+haru-core = { workspace = true }
 haru-ui = { workspace = true }
 image = { workspace = true }
+
+# The message box that says why haru stopped, since a release build on
+# Windows has no console to print to.
+[target.'cfg(windows)'.dependencies]
+rfd = { workspace = true }
 
 [lints]
 workspace = true
