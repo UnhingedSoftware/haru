@@ -269,12 +269,31 @@ mod tests {
         let tiny = image::RgbaImage::new(1, 1);
         let _ = tiny.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png);
         assert!(decode(&png).is_some());
-        // Rewrite the IHDR width to 100000; the CRC no longer matches, but the
-        // limit must refuse it before anything is allocated either way.
+        // Rewrite the IHDR width to 100000 and fix up its CRC, so it is the
+        // size limit that refuses the picture and not a checksum mismatch.
         if let Some(width) = png.get_mut(16..20) {
             width.copy_from_slice(&100_000_u32.to_be_bytes());
         }
+        let crc = crc32(png.get(12..29).unwrap_or_default());
+        if let Some(stored) = png.get_mut(29..33) {
+            stored.copy_from_slice(&crc.to_be_bytes());
+        }
         assert!(decode(&png).is_none());
+    }
+
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = !0_u32;
+        for &byte in bytes {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                crc = if crc & 1 == 1 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
     }
 
     #[test]

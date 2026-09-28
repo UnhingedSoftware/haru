@@ -62,6 +62,12 @@ pub struct Library {
     /// up the size of every file in it, which took the window's thread for as
     /// long as that took each time the tab was opened.
     scanning: Option<Receiver<Scanned>>,
+    /// A rescan asked for while one was running: it runs once that one
+    /// lands, since the first may have missed what prompted it.
+    rescan: Option<Vec<PathBuf>>,
+    /// Items removed while a scan was running, which that scan may still
+    /// have seen.
+    removed: Vec<PathBuf>,
 }
 
 type Scanned = (Vec<Installed>, Vec<String>);
@@ -105,6 +111,8 @@ impl Library {
             kind: None,
             broken: Vec::new(),
             scanning: None,
+            rescan: None,
+            removed: Vec::new(),
             confirming: None,
             settings: crate::props::Panel::default(),
             workshop,
@@ -136,20 +144,29 @@ impl Library {
 
     pub fn refresh(&mut self, config: &Config, engine: &Engine) {
         let roots = config.libraries();
+        if self.scanning.is_some() {
+            self.rescan = Some(roots);
+        } else {
+            self.start_scan(roots);
+        }
+        self.sync(engine);
+    }
+
+    fn start_scan(&mut self, roots: Vec<PathBuf>) {
         let (tell, heard) = channel();
+        let sent = roots.clone();
         let started = std::thread::Builder::new()
             .name("haru-library-scan".to_owned())
             .spawn(move || {
-                let _ = tell.send(scan(&roots));
+                let _ = tell.send(scan(&sent));
             });
         match started {
             Ok(_) => self.scanning = Some(heard),
             Err(_) => {
                 self.scanning = None;
-                self.take_scan(scan(&config.libraries()));
+                self.take_scan(scan(&roots));
             }
         }
-        self.sync(engine);
     }
 
     fn collect_scan(&mut self) {
@@ -161,17 +178,24 @@ impl Library {
                 self.scanning = None;
                 self.take_scan(scanned);
             }
-            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => self.scanning = None,
+        }
+        self.removed.clear();
+        if let Some(roots) = self.rescan.take() {
+            self.start_scan(roots);
         }
     }
 
-    fn take_scan(&mut self, (items, broken): Scanned) {
+    fn take_scan(&mut self, (mut items, broken): Scanned) {
+        items.retain(|item| !self.removed.contains(&item.dir));
+        let selected = self
+            .selected
+            .and_then(|index| self.items.get(index))
+            .map(|item| item.dir.clone());
+        self.selected = selected.and_then(|dir| items.iter().position(|item| item.dir == dir));
         self.items = items;
         self.broken = broken;
-        if self.selected.is_some_and(|index| index >= self.items.len()) {
-            self.selected = None;
-        }
     }
 
     fn sync(&mut self, engine: &Engine) {
@@ -550,6 +574,9 @@ impl Library {
             Ok(()) => {
                 self.items.retain(|other| other.id != item.id);
                 self.selected = None;
+                if self.scanning.is_some() {
+                    self.removed.push(item.dir.clone());
+                }
                 format!("removed {}", item.title)
             }
             Err(error) => format!("could not remove the files: {error}"),

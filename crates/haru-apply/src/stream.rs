@@ -13,9 +13,9 @@ const FORMAT_RGBA8: u32 = 0;
 
 const STARTUP: Duration = Duration::from_secs(30);
 
-/// The largest frame kirie sends: `--size` is clamped to 3840 on the longest
-/// edge, so 3840x3840 RGBA. A header asking for more is not believed.
-const MAX_FRAME_BYTES: u64 = 3840 * 3840 * 4;
+/// The longest edge kirie sends: `--size` is clamped to 3840. A header asking
+/// for more is not believed.
+const MAX_SIDE: u32 = 3840;
 
 pub struct Frame {
     pub width: u32,
@@ -103,7 +103,7 @@ impl Preview {
         if expected != Some(u64::from(bytes)) {
             return Err("a frame's size and length disagree".to_owned());
         }
-        if u64::from(bytes) > MAX_FRAME_BYTES {
+        if width > MAX_SIDE || height > MAX_SIDE {
             return Err(format!(
                 "a {width}x{height} frame is larger than any preview"
             ));

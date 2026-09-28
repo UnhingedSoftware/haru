@@ -178,8 +178,7 @@ fn read(dir: &Path, id: String) -> Option<Installed> {
                 )
             })
         })
-        .map(|name| dir.join(name))
-        .filter(|path| path.is_file());
+        .and_then(|name| inside(dir, &dir.join(name)));
 
     let installed = std::fs::metadata(dir)
         .and_then(|meta| meta.modified())
@@ -194,6 +193,14 @@ fn read(dir: &Path, id: String) -> Option<Installed> {
         installed,
         dir: dir.to_owned(),
     })
+}
+
+/// `path` if it is a file that, with symlinks followed, still lies inside
+/// `dir`: an item can ship a link that points anywhere.
+fn inside(dir: &Path, path: &Path) -> Option<PathBuf> {
+    let root = dir.canonicalize().ok()?;
+    let target = path.canonicalize().ok()?;
+    (target.starts_with(&root) && target.is_file()).then(|| path.to_owned())
 }
 
 fn directory_size(dir: &Path) -> u64 {
