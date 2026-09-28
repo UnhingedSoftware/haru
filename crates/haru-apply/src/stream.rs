@@ -13,22 +13,14 @@ const FORMAT_RGBA8: u32 = 0;
 
 const STARTUP: Duration = Duration::from_secs(30);
 
+/// The largest frame kirie sends: `--size` is clamped to 3840 on the longest
+/// edge, so 3840x3840 RGBA. A header asking for more is not believed.
+const MAX_FRAME_BYTES: u64 = 3840 * 3840 * 4;
+
 pub struct Frame {
     pub width: u32,
     pub height: u32,
     pub pixels: Vec<u8>,
-}
-
-fn kirie_env() -> Vec<(String, std::ffi::OsString)> {
-    let mut out = Vec::new();
-    if let Some(assets) = haru_core::engine::found() {
-        out.push(("KIRIE_WE_ASSETS".to_owned(), assets.into_os_string()));
-    }
-    let roots = haru_core::Config::load().libraries();
-    if let Ok(joined) = std::env::join_paths(roots) {
-        out.push(("KIRIE_STEAM_LIBRARY".to_owned(), joined));
-    }
-    out
 }
 
 pub struct Preview {
@@ -54,7 +46,7 @@ impl Preview {
             .arg(edge.to_string())
             .env_remove("WAYLAND_DISPLAY")
             .env_remove("DISPLAY")
-            .envs(kirie_env())
+            .envs(crate::renderer_env())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
@@ -86,10 +78,6 @@ impl Preview {
         self.send(&format!("property {key} {value}"))
     }
 
-    pub fn set_background(&mut self, dir: &Path) -> Result<(), String> {
-        self.send(&format!("bg {}", dir.display()))
-    }
-
     pub fn frame(&mut self) -> Result<Frame, String> {
         let mut header = [0_u8; HEADER_BYTES];
         self.stream
@@ -108,12 +96,20 @@ impl Preview {
             return Err(format!("unknown pixel format {}", field(16)));
         }
 
-        let (width, height, bytes) = (field(8), field(12), field(20) as usize);
-        if u64::from(width) * u64::from(height) * 4 != bytes as u64 {
+        let (width, height, bytes) = (field(8), field(12), field(20));
+        let expected = u64::from(width)
+            .checked_mul(u64::from(height))
+            .and_then(|pixels| pixels.checked_mul(4));
+        if expected != Some(u64::from(bytes)) {
             return Err("a frame's size and length disagree".to_owned());
         }
+        if u64::from(bytes) > MAX_FRAME_BYTES {
+            return Err(format!(
+                "a {width}x{height} frame is larger than any preview"
+            ));
+        }
 
-        let mut pixels = vec![0_u8; bytes];
+        let mut pixels = vec![0_u8; bytes as usize];
         self.stream
             .read_exact(&mut pixels)
             .map_err(|error| format!("the preview stream ended mid-frame ({error})"))?;
@@ -125,7 +121,10 @@ impl Preview {
         })
     }
 
+    /// One command per line, so a line break inside a property value would
+    /// start a second command; it is folded to a space, as `Kirie::ask` does.
     fn send(&mut self, line: &str) -> Result<(), String> {
+        let line = line.replace(['\n', '\r'], " ");
         writeln!(self.stream, "{line}")
             .map_err(|error| format!("the renderer stopped listening ({error})"))
     }
