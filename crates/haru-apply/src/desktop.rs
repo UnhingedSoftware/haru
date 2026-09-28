@@ -83,12 +83,13 @@ fn shortcut(path: &Path, binary: &Path) -> Result<(), String> {
 /// The one line the Start-menu entry runs.
 ///
 /// `start ""` hands haru off and lets the console close behind it; without the
-/// empty title, `start` reads the quoted path as one.
+/// empty title, `start` reads the quoted path as one. A batch file expands
+/// `%NAME%` even inside quotes, so a `%` in the path is doubled.
 #[must_use]
 pub fn command_text(binary: &Path) -> String {
     format!(
         "@echo off\r\nstart \"\" \"{}\"\r\n",
-        binary.to_string_lossy().replace('"', "")
+        binary.to_string_lossy().replace('"', "").replace('%', "%%")
     )
 }
 
@@ -132,7 +133,8 @@ fn refresh(applications: &Path) {
 
 #[must_use]
 pub fn desktop_text(template: &str, binary: &Path) -> String {
-    let program = binary.to_string_lossy();
+    let path = binary.to_string_lossy();
+    let program = crate::startup::desktop_word(&path);
     template
         .lines()
         .map(|line| match line.split_once('=') {
@@ -144,7 +146,7 @@ pub fn desktop_text(template: &str, binary: &Path) -> String {
                     format!("Exec={program} {arguments}")
                 }
             }
-            Some(("TryExec", _)) => format!("TryExec={program}"),
+            Some(("TryExec", _)) => format!("TryExec={path}"),
             _ => line.to_owned(),
         })
         .collect::<Vec<_>>()
@@ -244,6 +246,16 @@ mod tests {
         assert!(text.contains("TryExec=/opt/haru/bin/haru"));
         assert!(text.contains("Exec=/opt/haru/bin/haru workshop"));
         assert!(text.contains("Icon=haru"));
+    }
+
+    #[test]
+    fn a_path_with_a_space_is_one_argument() {
+        let text = desktop_text(DESKTOP, Path::new("/home/a b/haru"));
+        assert!(
+            text.contains("Exec=\"/home/a b/haru\" workshop\n"),
+            "{text}"
+        );
+        assert!(text.contains("TryExec=/home/a b/haru\n"), "{text}");
     }
 
     #[test]
