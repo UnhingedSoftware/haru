@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use egui::{Align, Layout, RichText};
 use haru_apply::{Offscreen, PreviewStream};
@@ -15,30 +16,30 @@ struct Job {
     seq: u64,
 }
 
+/// A finished picture, already decoded into what egui uploads, so the window's
+/// thread does no pixel work of its own.
 struct Frame {
     seq: u64,
-    result: Result<Rendered, String>,
-    took: std::time::Duration,
+    result: Result<egui::ColorImage, String>,
+    took: Duration,
 }
 
-enum Rendered {
-    Live(haru_apply::Frame),
-    Still(PathBuf),
-}
+/// Only the newest frame is kept: the worker overwrites it, the window takes
+/// it. A queue instead grew by a whole frame 30 times a second whenever the
+/// window was not drawing, minimised say, to take them.
+type Latest = Arc<Mutex<Option<Frame>>>;
 
 pub struct Preview {
     item: Option<Installed>,
     settings: Vec<properties::Property>,
-    shown: Option<Rendered>,
-    generation: u64,
     texture: Option<egui::TextureHandle>,
     status: String,
     seq: u64,
     waiting: bool,
-    took: Option<std::time::Duration>,
+    took: Option<Duration>,
     watching: Arc<AtomicBool>,
     pending: Arc<Mutex<Option<Job>>>,
-    frames: Receiver<Frame>,
+    latest: Latest,
     wake: Sender<()>,
     wants_library: bool,
 }
@@ -50,7 +51,7 @@ impl Default for Preview {
 }
 
 #[must_use]
-fn frame_rate(took: std::time::Duration) -> String {
+fn frame_rate(took: Duration) -> String {
     let seconds = took.as_secs_f32();
     if seconds <= 0.0 {
         return "measuring\u{2026}".to_owned();
@@ -69,22 +70,21 @@ impl Preview {
     #[must_use]
     pub fn new() -> Self {
         let pending: Arc<Mutex<Option<Job>>> = Arc::new(Mutex::new(None));
-        let (frames_out, frames) = channel::<Frame>();
+        let latest: Latest = Arc::new(Mutex::new(None));
         let (wake, woken) = channel::<()>();
 
         let watching = Arc::new(AtomicBool::new(false));
         let worker_pending = Arc::clone(&pending);
         let worker_watching = Arc::clone(&watching);
+        let worker_latest = Arc::clone(&latest);
         std::thread::Builder::new()
             .name("haru-preview-render".to_owned())
-            .spawn(move || worker(&worker_pending, &worker_watching, &frames_out, &woken))
+            .spawn(move || worker(&worker_pending, &worker_watching, &worker_latest, &woken))
             .ok();
 
         Self {
             item: None,
             settings: Vec::new(),
-            shown: None,
-            generation: 0,
             texture: None,
             status: String::new(),
             seq: 0,
@@ -92,7 +92,7 @@ impl Preview {
             took: None,
             watching,
             pending,
-            frames,
+            latest,
             wake,
             wants_library: false,
         }
@@ -112,7 +112,6 @@ impl Preview {
         self.settings = properties::read(&item.dir);
         self.item = Some(item);
         self.texture = None;
-        self.shown = None;
         self.status = String::new();
         self.request();
     }
@@ -145,8 +144,10 @@ impl Preview {
         }
         self.collect(ctx);
 
+        // Paced to the stream rather than `request_repaint()` every frame,
+        // which redrew the whole window as fast as the GPU allowed.
         if self.item.is_some() {
-            ctx.request_repaint();
+            ctx.request_repaint_after(Duration::from_millis(u64::from(1000 / FPS)));
         }
 
         if sidebar {
@@ -181,47 +182,26 @@ impl Preview {
     }
 
     fn collect(&mut self, ctx: &egui::Context) {
-        while let Ok(frame) = self.frames.try_recv() {
-            if frame.seq != self.seq {
-                continue;
-            }
-            self.waiting = false;
-            self.took = Some(frame.took);
-            match frame.result {
-                Ok(rendered) => {
-                    self.status.clear();
-                    self.shown = Some(rendered);
-                    self.generation = self.generation.saturating_add(1);
-                    self.texture = None;
-                }
-                Err(why) => self.status = why,
-            }
+        let Some(frame) = self.latest.lock().ok().and_then(|mut held| held.take()) else {
+            return;
+        };
+        if frame.seq != self.seq {
+            return;
         }
-
-        if self.texture.is_none()
-            && let Some(rendered) = self.shown.take()
-        {
-            let image = match rendered {
-                Rendered::Live(frame) => Some(egui::ColorImage::from_rgba_unmultiplied(
-                    [frame.width as usize, frame.height as usize],
-                    &frame.pixels,
-                )),
-                Rendered::Still(path) => std::fs::read(&path)
-                    .ok()
-                    .and_then(|bytes| image::load_from_memory(&bytes).ok())
-                    .map(|decoded| {
-                        let rgba = decoded.to_rgba8();
-                        let size = [rgba.width() as usize, rgba.height() as usize];
-                        egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw())
-                    }),
-            };
-            if let Some(image) = image {
-                self.texture = Some(ctx.load_texture(
-                    format!("preview-{}", self.generation),
-                    image,
-                    egui::TextureOptions::LINEAR,
-                ));
+        self.waiting = false;
+        self.took = Some(frame.took);
+        match frame.result {
+            Ok(image) => {
+                self.status.clear();
+                match self.texture.as_mut() {
+                    Some(texture) => texture.set(image, egui::TextureOptions::LINEAR),
+                    None => {
+                        self.texture =
+                            Some(ctx.load_texture("preview", image, egui::TextureOptions::LINEAR));
+                    }
+                }
             }
+            Err(why) => self.status = why,
         }
     }
 
@@ -343,41 +323,69 @@ fn render(
     still: &std::path::Path,
     live: &mut Option<Live>,
     job: &Job,
-) -> Result<Rendered, String> {
+) -> Result<egui::ColorImage, String> {
     let updated = match live.as_mut() {
         Some(open) if open.dir == job.dir => open.update(&job.properties).ok(),
         _ => None,
     };
-
-    match updated {
-        Some(frame) => Ok(Rendered::Live(frame)),
-        None => match Live::start(offscreen.binary(), &job.dir, &job.properties) {
-            Ok((open, frame)) => {
-                *live = Some(open);
-                Ok(Rendered::Live(frame))
-            }
-            Err(_) => {
-                *live = None;
-                offscreen
-                    .render(&job.dir, &job.properties, still)
-                    .map(|()| Rendered::Still(still.to_path_buf()))
-            }
-        },
+    if let Some(frame) = updated {
+        return Ok(picture(&frame));
     }
+    match Live::start(offscreen.binary(), &job.dir, &job.properties) {
+        Ok((open, frame)) => {
+            *live = Some(open);
+            Ok(picture(&frame))
+        }
+        Err(_) => {
+            *live = None;
+            offscreen.render(&job.dir, &job.properties, still)?;
+            let decoded = std::fs::read(still)
+                .ok()
+                .and_then(|bytes| image::load_from_memory(&bytes).ok())
+                .ok_or("the renderer wrote a picture that could not be read")?
+                .to_rgba8();
+            let size = [decoded.width() as usize, decoded.height() as usize];
+            Ok(egui::ColorImage::from_rgba_unmultiplied(
+                size,
+                decoded.as_raw(),
+            ))
+        }
+    }
+}
+
+fn picture(frame: &haru_apply::Frame) -> egui::ColorImage {
+    egui::ColorImage::from_rgba_unmultiplied(
+        [frame.width as usize, frame.height as usize],
+        &frame.pixels,
+    )
 }
 
 fn worker(
     pending: &Arc<Mutex<Option<Job>>>,
     watching: &Arc<AtomicBool>,
-    frames: &Sender<Frame>,
+    latest: &Latest,
     woken: &Receiver<()>,
 ) {
     let offscreen = Offscreen::new(None);
-    let still = std::env::temp_dir().join("haru-preview.png");
+    // In the per-user runtime directory rather than the shared temp one, where
+    // anyone could have left a link at a fixed name for the screenshot to be
+    // written through.
+    let still = haru_core::runtime_dir().join(format!("haru-preview-{}.png", std::process::id()));
     let mut live: Option<Live> = None;
     let mut seq: u64 = 0;
+    let publish = |frame: Frame| match latest.lock() {
+        Ok(mut held) => {
+            *held = Some(frame);
+            true
+        }
+        Err(_) => false,
+    };
 
     loop {
+        // Nobody holds the other end once the window has gone.
+        if Arc::strong_count(latest) == 1 {
+            return;
+        }
         if !watching.load(Ordering::Relaxed) {
             live = None;
             if woken.recv().is_err() {
@@ -394,14 +402,11 @@ fn worker(
 
             let result = render(&offscreen, &still, &mut live, &job);
             let failed = result.is_err();
-            if frames
-                .send(Frame {
-                    seq,
-                    result,
-                    took: started.elapsed(),
-                })
-                .is_err()
-            {
+            if !publish(Frame {
+                seq,
+                result,
+                took: started.elapsed(),
+            }) {
                 return;
             }
             if failed && woken.recv().is_err() {
@@ -420,14 +425,17 @@ fn worker(
         let started = std::time::Instant::now();
         match open.stream.frame() {
             Ok(frame) => {
-                if frames
-                    .send(Frame {
-                        seq,
-                        result: Ok(Rendered::Live(frame)),
-                        took: started.elapsed(),
-                    })
-                    .is_err()
-                {
+                // The window has not taken the last one yet, so it is not
+                // drawing: read the stream to keep it flowing, skip the work.
+                let unseen = latest.lock().map_or(true, |held| held.is_some());
+                if unseen {
+                    continue;
+                }
+                if !publish(Frame {
+                    seq,
+                    result: Ok(picture(&frame)),
+                    took: started.elapsed(),
+                }) {
                     return;
                 }
             }
@@ -504,21 +512,18 @@ mod tests {
 
     #[test]
     fn a_quick_frame_reads_in_milliseconds_and_frames() {
-        let said = frame_rate(std::time::Duration::from_millis(16));
+        let said = frame_rate(Duration::from_millis(16));
         assert!(said.contains("16 ms"), "{said}");
         assert!(said.contains("62 fps") || said.contains("63 fps"), "{said}");
     }
 
     #[test]
     fn a_slow_frame_reads_in_seconds() {
-        assert_eq!(
-            frame_rate(std::time::Duration::from_millis(2500)),
-            "2.5 s a frame"
-        );
+        assert_eq!(frame_rate(Duration::from_millis(2500)), "2.5 s a frame");
     }
 
     #[test]
     fn nothing_measured_yet_says_so() {
-        assert_eq!(frame_rate(std::time::Duration::ZERO), "measuring\u{2026}");
+        assert_eq!(frame_rate(Duration::ZERO), "measuring\u{2026}");
     }
 }
