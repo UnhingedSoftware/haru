@@ -347,7 +347,7 @@ mod tests {
 /// `XDG_RUNTIME_DIR` (macOS, or a bare login). The temp dir is shared between
 /// accounts there, so a fixed name collides and the second user cannot even
 /// unlink the first one's socket under the sticky bit. This must stay in step
-/// with kirie's own `default_control_socket`.
+/// with kirie's own `runtime_dir` (crates/kirie/src/os.rs).
 #[must_use]
 #[cfg(unix)]
 pub fn runtime_dir() -> std::path::PathBuf {

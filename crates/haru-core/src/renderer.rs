@@ -118,8 +118,8 @@ impl Default for Renderer {
 ///
 /// haru's slider is 0-100 because that is what a volume slider reads as.
 /// `--volume` and the `volume` socket command are 0-128, with a default of 15.
-/// Converting here rather than at each call site is what keeps the two from
-/// drifting apart -- they had, in three different directions at once.
+/// Converting here rather than at each call site keeps the two from drifting
+/// apart.
 #[must_use]
 pub fn kirie_volume(percent: u32) -> u32 {
     percent.min(100) * 128 / 100
@@ -149,10 +149,9 @@ impl Renderer {
         if self.mute {
             out.push("--silent".to_owned());
         } else {
-            // Always sent, and on the renderer's scale. The slider is 0-100 and
+            // Always sent, and on the renderer's scale: the slider is 0-100 and
             // `--volume` is 0-128 with a default of 15, so leaving the flag off
-            // at 100 used to start the wallpaper at about 12% while the slider
-            // read full.
+            // would start a full slider at about 12%.
             out.push(format!("--volume={}", kirie_volume(self.volume)));
         }
         if self.scaling != Scaling::Default {
@@ -299,9 +298,7 @@ mod tests {
     fn the_volume_reaches_the_renderer_on_its_own_scale() {
         let renderer = Renderer::default();
         assert_eq!(renderer.volume, 100, "the slider is 0-100");
-        // 0-128 is what `--volume` and the `volume` command take. A full slider
-        // used to send nothing at launch, leaving the renderer at its own
-        // default of 15, and then `volume 100` on the socket.
+        // 0-128 is what `--volume` and the `volume` command take.
         assert!(renderer.arguments().contains(&"--volume=128".to_owned()));
         assert!(renderer.live_commands().contains(&"volume 128".to_owned()));
 

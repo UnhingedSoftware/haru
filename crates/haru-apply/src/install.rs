@@ -209,12 +209,14 @@ pub fn destination() -> Option<PathBuf> {
     Some(haru_core::runtime_dir().join("bin").join(RENDERER))
 }
 
+/// Whether kirie publishes a build for this machine: the release carries
+/// `kirie-macos-aarch64` and no Intel Mac build.
 #[must_use]
 pub const fn supported() -> bool {
     cfg!(any(
         all(target_os = "linux", target_arch = "x86_64"),
         all(windows, target_arch = "x86_64"),
-        target_os = "macos"
+        all(target_os = "macos", target_arch = "aarch64")
     ))
 }
 
@@ -227,15 +229,11 @@ pub struct Build {
 }
 
 pub fn latest(web: Web) -> Result<Build, String> {
-    latest_from(REPOSITORY, &web.asset())
+    newest_from(REPOSITORY, &web.asset(), false)
 }
 
 pub fn latest_including_betas(web: Web) -> Result<Build, String> {
     newest_from(REPOSITORY, &web.asset(), true)
-}
-
-pub fn latest_from(repository: &str, asset: &str) -> Result<Build, String> {
-    newest_from(repository, asset, false)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -392,9 +390,15 @@ pub fn fetch(
     let parent = target.parent().ok_or("no directory to install into")?;
     std::fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
 
-    let response = ureq::get(&build.url)
+    // A per-read timeout rather than `.timeout(DEADLINE)`: ureq applies that
+    // one to the whole body too, so a large build on a slow line was cut off
+    // at 30 seconds however steadily it was arriving.
+    let response = ureq::AgentBuilder::new()
+        .timeout_connect(DEADLINE)
+        .timeout_read(DEADLINE)
+        .build()
+        .get(&build.url)
         .set("User-Agent", AGENT)
-        .timeout(DEADLINE)
         .call()
         .map_err(|error| format!("the download failed ({error})"))?;
 
@@ -450,8 +454,13 @@ fn write(
 ) -> Result<(), String> {
     const CHUNK: usize = 64 * 1024;
 
-    let mut file =
-        std::fs::File::create(staged).map_err(|error| format!("cannot write it ({error})"))?;
+    // `create_new` so that a file or link already at this name is never
+    // written through.
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(staged)
+        .map_err(|error| format!("cannot write it ({error})"))?;
     let mut body = response.into_reader().take(MAX_BYTES);
     let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
     let mut buffer = vec![0_u8; CHUNK];

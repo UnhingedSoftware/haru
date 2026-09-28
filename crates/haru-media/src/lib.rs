@@ -13,6 +13,12 @@ const IDLE_FRAMES: u64 = 120;
 
 const MAX_BYTES: usize = 10 * 1024 * 1024;
 
+/// The largest picture decoded at all. Previews are a few hundred pixels
+/// across; a small file claiming far more is a decompression bomb.
+const MAX_DECODED_EDGE: u32 = 8192;
+
+const MAX_DECODED_BYTES: u64 = 256 * 1024 * 1024;
+
 enum State {
     Loading,
     Ready(egui::TextureHandle, u64),
@@ -130,11 +136,6 @@ impl Previews {
     }
 
     #[must_use]
-    pub fn held(&self) -> usize {
-        self.entries.len()
-    }
-
-    #[must_use]
     pub fn loading(&self) -> usize {
         self.entries
             .values()
@@ -194,7 +195,16 @@ fn fetch(source: &str) -> Option<egui::ColorImage> {
         if source.contains("://") {
             return None;
         }
-        let body = std::fs::read(source).ok()?;
+        // Checked before reading: the path comes from a wallpaper's own
+        // project.json, and reading first would pull a file of any size in.
+        let file = std::fs::File::open(source).ok()?;
+        if file.metadata().ok()?.len() > MAX_BYTES as u64 {
+            return None;
+        }
+        let mut body = Vec::new();
+        file.take(MAX_BYTES as u64 + 1)
+            .read_to_end(&mut body)
+            .ok()?;
         if body.len() > MAX_BYTES {
             return None;
         }
@@ -218,7 +228,15 @@ fn fetch(source: &str) -> Option<egui::ColorImage> {
 }
 
 fn decode(body: &[u8]) -> Option<egui::ColorImage> {
-    let decoded = image::load_from_memory(body).ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_DECODED_EDGE);
+    limits.max_image_height = Some(MAX_DECODED_EDGE);
+    limits.max_alloc = Some(MAX_DECODED_BYTES);
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(body))
+        .with_guessed_format()
+        .ok()?;
+    reader.limits(limits);
+    let decoded = reader.decode().ok()?;
     let scaled = decoded.thumbnail(MAX_EDGE, MAX_EDGE).to_rgba8();
     let size = [scaled.width() as usize, scaled.height() as usize];
     Some(egui::ColorImage::from_rgba_unmultiplied(
@@ -243,6 +261,39 @@ mod tests {
     fn a_plain_http_url_is_refused_without_a_request() {
         assert!(fetch("http://example.invalid/preview.jpg").is_none());
         assert!(fetch("ftp://example.invalid/preview.jpg").is_none());
+    }
+
+    #[test]
+    fn a_picture_claiming_to_be_enormous_is_not_decoded() {
+        let mut png = Vec::new();
+        let tiny = image::RgbaImage::new(1, 1);
+        let _ = tiny.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png);
+        assert!(decode(&png).is_some());
+        // Rewrite the IHDR width to 100000 and fix up its CRC, so it is the
+        // size limit that refuses the picture and not a checksum mismatch.
+        if let Some(width) = png.get_mut(16..20) {
+            width.copy_from_slice(&100_000_u32.to_be_bytes());
+        }
+        let crc = crc32(png.get(12..29).unwrap_or_default());
+        if let Some(stored) = png.get_mut(29..33) {
+            stored.copy_from_slice(&crc.to_be_bytes());
+        }
+        assert!(decode(&png).is_none());
+    }
+
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = !0_u32;
+        for &byte in bytes {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                crc = if crc & 1 == 1 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
     }
 
     #[test]
@@ -296,6 +347,10 @@ mod tests {
                 State::Failed,
             );
         }
-        assert!(previews.held() <= KEEP + 1, "{}", previews.held());
+        assert!(
+            previews.entries.len() <= KEEP + 1,
+            "{}",
+            previews.entries.len()
+        );
     }
 }

@@ -125,7 +125,13 @@ fn download(to: &std::path::Path, progress: &mut dyn FnMut(u64, u64)) -> Result<
         .and_then(|length| length.parse().ok())
         .unwrap_or(0);
     let mut body = response.into_reader().take(LIMIT);
-    let mut file = std::fs::File::create(to)
+    // A fresh file, never one already at this name: what is written here is
+    // about to be run as administrator.
+    let _ = std::fs::remove_file(to);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(to)
         .map_err(|error| format!("cannot save the WebView2 installer ({error})"))?;
     let mut buffer = vec![0_u8; 64 * 1024];
     let mut done = 0_u64;

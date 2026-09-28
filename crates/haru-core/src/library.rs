@@ -117,9 +117,10 @@ pub fn scan(roots: &[PathBuf]) -> Vec<Installed> {
     items
 }
 
+/// The item directories under `roots` that are not among `known`, which is
+/// what `scan` of the same roots returned.
 #[must_use]
-pub fn unreadable(roots: &[PathBuf]) -> Vec<String> {
-    let known: Vec<String> = scan(roots).into_iter().map(|item| item.id).collect();
+pub fn unreadable(roots: &[PathBuf], known: &[Installed]) -> Vec<String> {
     let mut broken: Vec<String> = Vec::new();
 
     for root in roots {
@@ -135,7 +136,7 @@ pub fn unreadable(roots: &[PathBuf]) -> Vec<String> {
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            if id.is_empty() || known.contains(&id) || broken.contains(&id) {
+            if id.is_empty() || known.iter().any(|item| item.id == id) || broken.contains(&id) {
                 continue;
             }
             broken.push(id);
@@ -163,11 +164,21 @@ fn read(dir: &Path, id: String) -> Option<Installed> {
         .map(str::to_lowercase)
         .unwrap_or_else(|| "scene".to_owned());
 
+    // The name is the author's, so it is only followed when it stays inside
+    // the item: an absolute path or a `..` would point the picture decoder at
+    // any file on the machine.
     let preview = parsed
         .get("preview")
         .and_then(serde_json::Value::as_str)
-        .map(|name| dir.join(name))
-        .filter(|path| path.is_file());
+        .filter(|name| {
+            Path::new(name).components().all(|part| {
+                matches!(
+                    part,
+                    std::path::Component::Normal(_) | std::path::Component::CurDir
+                )
+            })
+        })
+        .and_then(|name| inside(dir, &dir.join(name)));
 
     let installed = std::fs::metadata(dir)
         .and_then(|meta| meta.modified())
@@ -182,6 +193,14 @@ fn read(dir: &Path, id: String) -> Option<Installed> {
         installed,
         dir: dir.to_owned(),
     })
+}
+
+/// `path` if it is a file that, with symlinks followed, still lies inside
+/// `dir`: an item can ship a link that points anywhere.
+fn inside(dir: &Path, path: &Path) -> Option<PathBuf> {
+    let root = dir.canonicalize().ok()?;
+    let target = path.canonicalize().ok()?;
+    (target.starts_with(&root) && target.is_file()).then(|| path.to_owned())
 }
 
 fn directory_size(dir: &Path) -> u64 {
@@ -276,14 +295,34 @@ mod tests {
     }
 
     #[test]
+    fn a_preview_outside_the_item_is_not_followed() {
+        let scratch = Scratch::new("escape");
+        let outside = scratch.0.join("secret.png");
+        let _ = std::fs::write(&outside, [0_u8; 8]);
+        let absolute = format!(
+            r#"{{"title":"A","preview":{:?}}}"#,
+            outside.to_string_lossy()
+        );
+        scratch.item("1", &absolute);
+        scratch.item(
+            "2",
+            r#"{"title":"B","preview":"../../../../../secret.png"}"#,
+        );
+        let found = scan(std::slice::from_ref(&scratch.0));
+        assert_eq!(found.len(), 2);
+        assert!(found.iter().all(|item| item.preview.is_none()), "{found:?}");
+    }
+
+    #[test]
     fn an_item_that_cannot_be_read_is_reported_by_id() {
         let scratch = Scratch::new("broken");
         scratch.item("11", r#"{"title":"Fine","type":"scene"}"#);
         scratch.item("22", "not json at all");
 
         let roots = std::slice::from_ref(&scratch.0);
-        assert_eq!(scan(roots).len(), 1);
-        assert_eq!(unreadable(roots), vec!["22".to_owned()]);
+        let found = scan(roots);
+        assert_eq!(found.len(), 1);
+        assert_eq!(unreadable(roots, &found), vec!["22".to_owned()]);
     }
 
     #[test]

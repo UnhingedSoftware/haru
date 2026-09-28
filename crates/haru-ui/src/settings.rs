@@ -99,7 +99,7 @@ fn card_label<'a>(cards: &'a [haru_apply::install::Card], value: &'a str) -> &'a
 pub struct Settings {
     chosen: Category,
     update_note: String,
-    renderer_seen: Option<(std::path::PathBuf, String)>,
+    renderer_seen: Option<(std::path::PathBuf, Option<String>)>,
     pending_tune: bool,
     pending_relaunch: bool,
     assets_note: String,
@@ -108,7 +108,61 @@ pub struct Settings {
     library: String,
     status: String,
     cards: Option<Vec<haru_apply::install::Card>>,
+    cards_coming: Option<std::sync::mpsc::Receiver<Vec<haru_apply::install::Card>>>,
+    version_coming: Option<std::sync::mpsc::Receiver<(std::path::PathBuf, Option<String>)>>,
+    disk: Option<OnDisk>,
     web_runtime: crate::runtime::WebRuntime,
+}
+
+/// What the Renderer and About pages say about files on disk.
+///
+/// Each is a filesystem probe, and finding the engine assets parses Steam's
+/// library list, so they are read at most once a second and again right after
+/// anything that changes them, rather than on every frame the page is drawn.
+struct OnDisk {
+    read: std::time::Instant,
+    assets: Option<std::path::PathBuf>,
+    assets_home: Option<std::path::PathBuf>,
+    wallpapers: Option<std::path::PathBuf>,
+    at_login: Option<std::path::PathBuf>,
+    in_menu: Option<std::path::PathBuf>,
+}
+
+impl OnDisk {
+    const FRESH: std::time::Duration = std::time::Duration::from_secs(1);
+
+    fn read() -> Self {
+        Self {
+            read: std::time::Instant::now(),
+            assets: haru_core::engine::found(),
+            assets_home: haru_core::engine::assets_home(),
+            wallpapers: Config::load().install_root(),
+            at_login: haru_apply::startup::enabled()
+                .then(haru_apply::startup::entry)
+                .flatten(),
+            in_menu: haru_apply::desktop::installed()
+                .then(haru_apply::desktop::entry)
+                .flatten(),
+        }
+    }
+}
+
+/// Run `work` on its own thread and hand back where its answer will arrive,
+/// so a process start never holds up the window.
+fn later<T: Send + 'static>(
+    ctx: &egui::Context,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Option<std::sync::mpsc::Receiver<T>> {
+    let (tell, heard) = std::sync::mpsc::channel();
+    let ctx = ctx.clone();
+    std::thread::Builder::new()
+        .name("haru-settings".to_owned())
+        .spawn(move || {
+            let _ = tell.send(work());
+            ctx.request_repaint();
+        })
+        .ok()
+        .map(|_| heard)
 }
 
 impl Settings {
@@ -142,6 +196,13 @@ impl Settings {
     ) -> Actions {
         self.assets_note = assets_note.to_owned();
         self.update_note = update_note.to_owned();
+        if self
+            .disk
+            .as_ref()
+            .is_none_or(|disk| disk.read.elapsed() >= OnDisk::FRESH)
+        {
+            self.disk = Some(OnDisk::read());
+        }
         let mut actions = Actions::default();
 
         egui::CentralPanel::default()
@@ -200,6 +261,9 @@ impl Settings {
                 });
             });
 
+        if actions.startup.is_some() || actions.register.is_some() || actions.fetch_assets {
+            self.disk = None;
+        }
         actions
     }
 
@@ -270,12 +334,17 @@ impl Settings {
         ui.add_space(18.0);
     }
 
-    fn engine_assets(ui: &mut egui::Ui, actions: &mut Actions, note: String) {
+    fn engine_assets(
+        ui: &mut egui::Ui,
+        actions: &mut Actions,
+        note: String,
+        found: Option<&std::path::Path>,
+    ) {
         if !note.is_empty() {
             ui.label(RichText::new(note).small().color(theme::MUTED));
             ui.add_space(4.0);
         }
-        match haru_core::engine::found() {
+        match found {
             Some(dir) => {
                 ui.label(
                     RichText::new(format!("engine assets: {}", dir.display()))
@@ -304,8 +373,7 @@ impl Settings {
         ui.add_space(8.0);
     }
 
-    fn as_application(ui: &mut egui::Ui, actions: &mut Actions) {
-        let there = haru_apply::desktop::installed();
+    fn as_application(ui: &mut egui::Ui, actions: &mut Actions, there: bool) {
         ui.horizontal(|ui| {
             if there {
                 ui.label(RichText::new("haru is in your applications").color(theme::MUTED));
@@ -332,8 +400,8 @@ impl Settings {
         });
     }
 
-    fn at_login(ui: &mut egui::Ui, actions: &mut Actions) {
-        let mut on = haru_apply::startup::enabled();
+    fn at_login(ui: &mut egui::Ui, actions: &mut Actions, entry: Option<&std::path::Path>) {
+        let mut on = entry.is_some();
         if ui
             .checkbox(&mut on, "Put the wallpaper up at login")
             .on_hover_text(if cfg!(target_os = "macos") {
@@ -345,7 +413,7 @@ impl Settings {
         {
             actions.startup = Some(on);
         }
-        if on && let Some(path) = haru_apply::startup::entry() {
+        if on && let Some(path) = entry {
             ui.label(
                 RichText::new(path.to_string_lossy().into_owned())
                     .small()
@@ -363,11 +431,17 @@ impl Settings {
     ) {
         theme::heading(ui, "Renderer");
         ui.add_space(4.0);
-        Self::engine_assets(ui, actions, self.assets_note.clone());
+        let disk = self.disk.get_or_insert_with(OnDisk::read);
+        let (assets, at_login, in_menu) = (
+            disk.assets.clone(),
+            disk.at_login.clone(),
+            disk.in_menu.is_some(),
+        );
+        Self::engine_assets(ui, actions, self.assets_note.clone(), assets.as_deref());
         ui.add_space(6.0);
-        Self::at_login(ui, actions);
+        Self::at_login(ui, actions, at_login.as_deref());
         ui.add_space(6.0);
-        Self::as_application(ui, actions);
+        Self::as_application(ui, actions, in_menu);
         ui.add_space(6.0);
         if haru_apply::webview2::needed() {
             self.web_runtime.ui(ui);
@@ -434,19 +508,29 @@ impl Settings {
         }
 
         ui.add_space(8.0);
-        let cards = self.cards.get_or_insert_with(|| {
-            let found = haru_apply::install::graphics_cards();
-            if found.is_empty() {
-                GPU_CHOICES
-                    .iter()
-                    .map(|(value, label)| haru_apply::install::Card {
-                        value: (*value).to_owned(),
-                        label: (*label).to_owned(),
-                    })
-                    .collect()
-            } else {
-                found
+        // The renderer's own list comes from running it, which can take a
+        // while as it opens every GPU; the generic choices stand in meanwhile.
+        if self.cards.is_none() && self.cards_coming.is_none() {
+            self.cards_coming = later(ui.ctx(), haru_apply::install::graphics_cards);
+        }
+        if let Some(found) = self
+            .cards_coming
+            .as_ref()
+            .and_then(|coming| coming.try_recv().ok())
+        {
+            self.cards_coming = None;
+            if !found.is_empty() {
+                self.cards = Some(found);
             }
+        }
+        let cards = self.cards.get_or_insert_with(|| {
+            GPU_CHOICES
+                .iter()
+                .map(|(value, label)| haru_apply::install::Card {
+                    value: (*value).to_owned(),
+                    label: (*label).to_owned(),
+                })
+                .collect()
         });
         ui.horizontal(|ui| {
             ui.label("Graphics card");
@@ -833,7 +917,7 @@ impl Settings {
         let binary = engine.snapshot().binary;
         let version = binary
             .as_deref()
-            .and_then(|path| self.renderer_version(path));
+            .and_then(|path| self.renderer_version(ui.ctx(), path));
         let named = match version {
             Some(version) => format!("kirie {version}"),
             None if binary.is_some() => "kirie (version unknown)".to_owned(),
@@ -842,25 +926,16 @@ impl Settings {
         Self::entry(ui, &named, binary.as_deref());
 
         ui.add_space(6.0);
+        let disk = self.disk.get_or_insert_with(OnDisk::read);
         for (what, path) in [
-            ("wallpapers", haru_core::Config::load().install_root()),
+            ("wallpapers", disk.wallpapers.clone()),
             (
                 "engine assets",
-                haru_core::engine::found().or_else(haru_core::engine::assets_home),
+                disk.assets.clone().or_else(|| disk.assets_home.clone()),
             ),
             ("settings", Config::path()),
-            (
-                "at login",
-                haru_apply::startup::enabled()
-                    .then(haru_apply::startup::entry)
-                    .flatten(),
-            ),
-            (
-                "in applications",
-                haru_apply::desktop::installed()
-                    .then(haru_apply::desktop::entry)
-                    .flatten(),
-            ),
+            ("at login", disk.at_login.clone()),
+            ("in applications", disk.in_menu.clone()),
         ] {
             if let Some(path) = path {
                 Self::entry(ui, what, Some(&path));
@@ -885,15 +960,35 @@ impl Settings {
         });
     }
 
-    fn renderer_version(&mut self, binary: &std::path::Path) -> Option<String> {
+    /// The renderer's version, asked of the binary once per path and on its
+    /// own thread; `None` until it has answered.
+    fn renderer_version(
+        &mut self,
+        ctx: &egui::Context,
+        binary: &std::path::Path,
+    ) -> Option<String> {
         if let Some((seen, version)) = &self.renderer_seen
             && seen == binary
         {
-            return Some(version.clone());
+            return version.clone();
         }
-        let version = haru_apply::install::version_of(binary)?;
-        self.renderer_seen = Some((binary.to_path_buf(), version.clone()));
-        Some(version)
+        if let Some((asked, version)) = self
+            .version_coming
+            .as_ref()
+            .and_then(|coming| coming.try_recv().ok())
+        {
+            self.version_coming = None;
+            self.renderer_seen = Some((asked, version));
+            return self.renderer_version(ctx, binary);
+        }
+        if self.version_coming.is_none() {
+            let asked = binary.to_path_buf();
+            self.version_coming = later(ctx, move || {
+                let version = haru_apply::install::version_of(&asked);
+                (asked, version)
+            });
+        }
+        None
     }
 
     fn section(ui: &mut egui::Ui, what: &str) {

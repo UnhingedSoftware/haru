@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::mpsc::{Receiver, channel};
 
 use egui::{Align, Layout, RichText, Rounding, Sense, Stroke, Vec2};
 use haru_apply::{Engine, Screen};
@@ -57,6 +58,24 @@ pub struct Library {
     previewing: Option<Installed>,
     kind: Option<String>,
     broken: Vec<String>,
+    /// A rescan in flight. Scanning reads every item's project.json and adds
+    /// up the size of every file in it, which took the window's thread for as
+    /// long as that took each time the tab was opened.
+    scanning: Option<Receiver<Scanned>>,
+    /// A rescan asked for while one was running: it runs once that one
+    /// lands, since the first may have missed what prompted it.
+    rescan: Option<Vec<PathBuf>>,
+    /// Items removed while a scan was running, which that scan may still
+    /// have seen.
+    removed: Vec<PathBuf>,
+}
+
+type Scanned = (Vec<Installed>, Vec<String>);
+
+fn scan(roots: &[PathBuf]) -> Scanned {
+    let items = library::scan(roots);
+    let broken = library::unreadable(roots, &items);
+    (items, broken)
 }
 
 impl Library {
@@ -91,6 +110,9 @@ impl Library {
             previewing: None,
             kind: None,
             broken: Vec::new(),
+            scanning: None,
+            rescan: None,
+            removed: Vec::new(),
             confirming: None,
             settings: crate::props::Panel::default(),
             workshop,
@@ -122,12 +144,58 @@ impl Library {
 
     pub fn refresh(&mut self, config: &Config, engine: &Engine) {
         let roots = config.libraries();
-        self.items = library::scan(&roots);
-        self.broken = library::unreadable(&roots);
-        self.sync(engine);
-        if self.selected.is_some_and(|index| index >= self.items.len()) {
-            self.selected = None;
+        if self.scanning.is_some() {
+            self.rescan = Some(roots);
+        } else {
+            self.start_scan(roots);
         }
+        self.sync(engine);
+    }
+
+    fn start_scan(&mut self, roots: Vec<PathBuf>) {
+        let (tell, heard) = channel();
+        let sent = roots.clone();
+        let started = std::thread::Builder::new()
+            .name("haru-library-scan".to_owned())
+            .spawn(move || {
+                let _ = tell.send(scan(&sent));
+            });
+        match started {
+            Ok(_) => self.scanning = Some(heard),
+            Err(_) => {
+                self.scanning = None;
+                self.take_scan(scan(&roots));
+            }
+        }
+    }
+
+    fn collect_scan(&mut self) {
+        let Some(scanning) = self.scanning.as_ref() else {
+            return;
+        };
+        match scanning.try_recv() {
+            Ok(scanned) => {
+                self.scanning = None;
+                self.take_scan(scanned);
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => self.scanning = None,
+        }
+        self.removed.clear();
+        if let Some(roots) = self.rescan.take() {
+            self.start_scan(roots);
+        }
+    }
+
+    fn take_scan(&mut self, (mut items, broken): Scanned) {
+        items.retain(|item| !self.removed.contains(&item.dir));
+        let selected = self
+            .selected
+            .and_then(|index| self.items.get(index))
+            .map(|item| item.dir.clone());
+        self.selected = selected.and_then(|dir| items.iter().position(|item| item.dir == dir));
+        self.items = items;
+        self.broken = broken;
     }
 
     fn sync(&mut self, engine: &Engine) {
@@ -162,8 +230,9 @@ impl Library {
         sidebar: bool,
     ) {
         self.collect();
+        self.collect_scan();
         self.sync(engine);
-        if self.unsubscribing.is_some() {
+        if self.unsubscribing.is_some() || self.scanning.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
         }
 
@@ -290,7 +359,9 @@ impl Library {
         if shown.is_empty() {
             ui.centered_and_justified(|ui| {
                 ui.label(
-                    RichText::new(if self.items.is_empty() {
+                    RichText::new(if self.items.is_empty() && self.scanning.is_some() {
+                        "Reading your library\u{2026}"
+                    } else if self.items.is_empty() {
                         "No wallpapers installed yet — find some in the Workshop tab."
                     } else {
                         "Nothing matches that filter."
@@ -503,6 +574,9 @@ impl Library {
             Ok(()) => {
                 self.items.retain(|other| other.id != item.id);
                 self.selected = None;
+                if self.scanning.is_some() {
+                    self.removed.push(item.dir.clone());
+                }
                 format!("removed {}", item.title)
             }
             Err(error) => format!("could not remove the files: {error}"),
@@ -565,11 +639,18 @@ impl Library {
             return;
         }
 
+        // By the directory's own name when the item is not listed yet, as
+        // happens when it has just landed and the rescan is still running.
         let staged = self
             .items
             .iter()
             .find(|item| item.dir == dir)
-            .map(|item| overrides::read(&item.id).into_iter().collect())
+            .map(|item| item.id.clone())
+            .or_else(|| {
+                dir.file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            })
+            .map(|id| overrides::read(&id).into_iter().collect())
             .unwrap_or_default();
 
         engine.apply(screen, dir, staged);
