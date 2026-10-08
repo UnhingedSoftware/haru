@@ -205,8 +205,9 @@ impl Library {
         self.broken = broken;
     }
 
-    /// Copies `files` into the library on a thread of its own; the last one
-    /// that works goes up on the chosen screen once it lands.
+    /// Copies `files` into the library on a thread of its own. A folder adds
+    /// every picture and video found in it. A single file goes up on the
+    /// chosen screen once it lands; a batch only joins the library.
     fn add_own(&mut self, files: Vec<PathBuf>) {
         if files.is_empty() || self.adding.is_some() {
             return;
@@ -221,7 +222,19 @@ impl Library {
             .spawn(move || {
                 let mut made = Vec::new();
                 let mut refused = Vec::new();
-                for file in &files {
+                let mut wanted = Vec::new();
+                for path in files {
+                    if path.is_dir() {
+                        let found = own::media_in(&path);
+                        if found.is_empty() {
+                            refused.push(format!("no pictures or videos in {}", path.display()));
+                        }
+                        wanted.extend(found);
+                    } else {
+                        wanted.push(path);
+                    }
+                }
+                for file in &wanted {
                     match own::add(file, &home) {
                         Ok(dir) => made.push(dir),
                         Err(why) => refused.push(why),
@@ -251,7 +264,7 @@ impl Library {
         };
         self.adding = None;
         self.refresh(config, engine);
-        if let Some(dir) = made.last() {
+        if let [dir] = made.as_slice() {
             self.apply_to_target(dir, engine);
         }
         if !refused.is_empty() {
@@ -395,12 +408,30 @@ impl Library {
             )
             .on_hover_text(
                 "Use one of your own files as a wallpaper. No Steam account or \
-                 Wallpaper Engine needed. You can also drop files on the window.",
+                 Wallpaper Engine needed. You can also drop files or folders on the window.",
             )
             .clicked()
             && let Some(files) = pick_own()
         {
             self.add_own(files);
+        }
+        ui.add_space(4.0);
+        if ui
+            .add_enabled(
+                self.adding.is_none(),
+                egui::Button::new("Add a folder\u{2026}").min_size(Vec2::new(200.0, 28.0)),
+            )
+            .on_hover_text(format!(
+                "Adds every picture and video in a folder and the folders inside it \
+                 (up to {}).",
+                own::FOLDER_LIMIT
+            ))
+            .clicked()
+            && let Some(folder) = rfd::FileDialog::new()
+                .set_title("Add every picture and video in a folder")
+                .pick_folder()
+        {
+            self.add_own(vec![folder]);
         }
         ui.add_space(10.0);
 

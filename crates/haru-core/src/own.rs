@@ -47,6 +47,50 @@ pub fn kind_of(file: &Path) -> Option<&'static str> {
     }
 }
 
+/// The most files one folder adds, so pointing at a whole drive by mistake
+/// does not start copying it.
+pub const FOLDER_LIMIT: usize = 1000;
+
+/// How deep `media_in` looks below the folder it was given.
+const FOLDER_DEPTH: usize = 8;
+
+/// Every picture and video in `dir` and the folders below it, in name order.
+/// Hidden files and folders are skipped, links to folders are not followed,
+/// and the search stops at `FOLDER_LIMIT` files.
+#[must_use]
+pub fn media_in(dir: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    walk(dir, 0, &mut found);
+    found
+}
+
+fn walk(dir: &Path, depth: usize, found: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut entries: Vec<std::fs::DirEntry> = entries.flatten().collect();
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    for entry in entries {
+        if found.len() >= FOLDER_LIMIT {
+            return;
+        }
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        let path = entry.path();
+        if kind.is_dir() {
+            if depth < FOLDER_DEPTH {
+                walk(&path, depth + 1, found);
+            }
+        } else if kind_of(&path).is_some() && path.is_file() {
+            found.push(path);
+        }
+    }
+}
+
 /// Adds `file` to the library under `home` and returns the item's folder.
 ///
 /// The file is hard-linked when it sits on the same disk and copied when it
@@ -293,6 +337,45 @@ mod tests {
         assert!(add(&source, &home).is_err());
         assert!(add(&scratch.0.join("missing.png"), &home).is_err());
         assert!(crate::library::scan_dirs(&[home]).is_empty());
+    }
+
+    #[test]
+    fn a_folder_yields_its_pictures_and_videos_and_nothing_else() {
+        let scratch = Scratch::new("folder");
+        let root = scratch.0.join("Wallpapers");
+        let _ = std::fs::create_dir_all(root.join("Holiday/Beach"));
+        let _ = std::fs::create_dir_all(root.join(".thumbnails"));
+        for name in [
+            "b.jpg",
+            "a.PNG",
+            "notes.txt",
+            "Holiday/clip.mp4",
+            "Holiday/Beach/sea.webp",
+            ".hidden.png",
+            ".thumbnails/t.png",
+        ] {
+            let _ = std::fs::write(root.join(name), b"x");
+        }
+
+        let found: Vec<String> = media_in(&root)
+            .iter()
+            .filter_map(|path| path.strip_prefix(&root).ok())
+            .map(|path| path.to_string_lossy().replace('\\', "/"))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                "Holiday/Beach/sea.webp",
+                "Holiday/clip.mp4",
+                "a.PNG",
+                "b.jpg"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_missing_folder_yields_nothing() {
+        assert!(media_in(Path::new("/no/such/folder/anywhere")).is_empty());
     }
 
     #[test]
