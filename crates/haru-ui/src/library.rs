@@ -71,6 +71,8 @@ pub struct Library {
     /// The user's own pictures and videos being copied into the library, off
     /// the window's thread since a video can be gigabytes.
     adding: Option<Receiver<Added>>,
+    /// Files dropped while an add was running, added once it lands.
+    queued: Vec<PathBuf>,
 }
 
 /// What adding files produced: the folders made, and why any were refused.
@@ -120,6 +122,7 @@ impl Library {
             rescan: None,
             removed: Vec::new(),
             adding: None,
+            queued: Vec::new(),
             confirming: None,
             settings: crate::props::Panel::default(),
             workshop,
@@ -209,7 +212,12 @@ impl Library {
     /// every picture and video found in it. A single file goes up on the
     /// chosen screen once it lands; a batch only joins the library.
     fn add_own(&mut self, files: Vec<PathBuf>) {
-        if files.is_empty() || self.adding.is_some() {
+        if files.is_empty() {
+            return;
+        }
+        if self.adding.is_some() {
+            self.queued.extend(files);
+            self.status = format!("adding\u{2026} ({} more waiting)", self.queued.len());
             return;
         }
         let Some(home) = own::home() else {
@@ -281,6 +289,8 @@ impl Library {
         } else if made.len() > 1 {
             self.status = format!("added {} wallpapers", made.len());
         }
+        let queued = std::mem::take(&mut self.queued);
+        self.add_own(queued);
     }
 
     fn sync(&mut self, engine: &Engine) {

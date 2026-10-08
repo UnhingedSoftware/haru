@@ -101,8 +101,8 @@ pub fn is_picture(dir: &Path) -> bool {
 
 /// Adds `file` to the library under `home` and returns the item's folder.
 ///
-/// The file is hard-linked when it sits on the same disk and copied when it
-/// does not, so the original can move or go without breaking the wallpaper.
+/// The file is copied, so the original can move, change or go without
+/// touching the wallpaper.
 /// Adding the same file again returns the folder it already has.
 ///
 /// # Errors
@@ -157,10 +157,10 @@ fn build(source: &Path, kind: &str, staging: &Path) -> Result<(), String> {
         .unwrap_or_default();
     let name = format!("wallpaper.{ext}");
     let target = staging.join(&name);
-    if std::fs::hard_link(source, &target).is_err() {
-        std::fs::copy(source, &target)
-            .map_err(|error| format!("copying {}: {error}", display_name(source)))?;
-    }
+    // Copied rather than hard-linked: a link shares the original's bytes, so
+    // editing the original in place would change the wallpaper too.
+    std::fs::copy(source, &target)
+        .map_err(|error| format!("copying {}: {error}", display_name(source)))?;
 
     let preview = (kind == "image" && thumbnail(&target, &staging.join("preview.jpg")))
         .then_some("preview.jpg");
@@ -330,6 +330,11 @@ mod tests {
         let home = scratch.0.join("own");
 
         let dir = added(&source, &home);
+        let _ = std::fs::write(&source, b"edited in place");
+        assert_eq!(
+            std::fs::read(dir.join("wallpaper.mkv")).ok().as_deref(),
+            Some(&b"frames"[..])
+        );
         let _ = std::fs::remove_file(&source);
         assert_eq!(
             std::fs::read(dir.join("wallpaper.mkv")).ok().as_deref(),

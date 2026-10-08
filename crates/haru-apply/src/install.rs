@@ -190,15 +190,41 @@ pub fn prebake(pictures: &[PathBuf]) -> bool {
     let Some(binary) = installed() else {
         return false;
     };
-    crate::child::quiet(binary)
+    let Ok(mut child) = crate::child::quiet(binary)
         .arg("prebake")
         .args(pictures)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
+        .spawn()
+    else {
+        return false;
+    };
+    // A large photo takes a second or two per screen size; a renderer that
+    // hangs must not hold the adding thread or its process forever.
+    let count = u32::try_from(pictures.len()).unwrap_or(u32::MAX);
+    let deadline = PREBAKE_BASE
+        .saturating_add(PREBAKE_EACH.saturating_mul(count))
+        .min(PREBAKE_MOST);
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) if started.elapsed() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Ok(None) | Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
 }
+
+const PREBAKE_BASE: std::time::Duration = std::time::Duration::from_secs(10);
+const PREBAKE_EACH: std::time::Duration = std::time::Duration::from_secs(20);
+const PREBAKE_MOST: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 
 #[must_use]
 pub fn version_of(binary: &Path) -> Option<String> {
