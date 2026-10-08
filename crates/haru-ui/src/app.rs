@@ -98,7 +98,7 @@ impl Haru {
 
         let mut preview = Preview::new();
         if let Some(wanted) = item {
-            if let Some(found) = haru_core::library::scan(&config.libraries())
+            if let Some(found) = haru_core::library::scan_all(&config.libraries())
                 .into_iter()
                 .find(|installed| installed.id == wanted)
             {

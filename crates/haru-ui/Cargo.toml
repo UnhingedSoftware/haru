@@ -15,6 +15,9 @@ haru-media = { workspace = true }
 haru-workshop = { workspace = true }
 image = { workspace = true }
 qrcode = { workspace = true }
+# The "Add a picture or video" dialog. On Linux it asks the desktop portal,
+# so no GTK is linked in.
+rfd = { workspace = true, features = ["xdg-portal", "async-std"] }
 tapline = { workspace = true }
 tapline-ids = { workspace = true }
 

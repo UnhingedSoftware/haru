@@ -3,7 +3,7 @@ use std::sync::mpsc::{Receiver, channel};
 
 use egui::{Align, Layout, RichText, Rounding, Sense, Stroke, Vec2};
 use haru_apply::{Engine, Screen};
-use haru_core::{Config, Installed, human_size, library, overrides};
+use haru_core::{Config, Installed, human_size, library, overrides, own};
 use haru_media::Previews;
 use haru_workshop::{Reply, Request, Workshop};
 
@@ -68,12 +68,18 @@ pub struct Library {
     /// Items removed while a scan was running, which that scan may still
     /// have seen.
     removed: Vec<PathBuf>,
+    /// The user's own pictures and videos being copied into the library, off
+    /// the window's thread since a video can be gigabytes.
+    adding: Option<Receiver<Added>>,
 }
+
+/// What adding files produced: the folders made, and why any were refused.
+type Added = (Vec<PathBuf>, Vec<String>);
 
 type Scanned = (Vec<Installed>, Vec<String>);
 
 fn scan(roots: &[PathBuf]) -> Scanned {
-    let items = library::scan(roots);
+    let items = library::scan_all(roots);
     let broken = library::unreadable(roots, &items);
     (items, broken)
 }
@@ -113,6 +119,7 @@ impl Library {
             scanning: None,
             rescan: None,
             removed: Vec::new(),
+            adding: None,
             confirming: None,
             settings: crate::props::Panel::default(),
             workshop,
@@ -198,6 +205,62 @@ impl Library {
         self.broken = broken;
     }
 
+    /// Copies `files` into the library on a thread of its own; the last one
+    /// that works goes up on the chosen screen once it lands.
+    fn add_own(&mut self, files: Vec<PathBuf>) {
+        if files.is_empty() || self.adding.is_some() {
+            return;
+        }
+        let Some(home) = own::home() else {
+            self.status = "no data directory to keep your files in".to_owned();
+            return;
+        };
+        let (tell, heard) = channel();
+        let started = std::thread::Builder::new()
+            .name("haru-add-own".to_owned())
+            .spawn(move || {
+                let mut made = Vec::new();
+                let mut refused = Vec::new();
+                for file in &files {
+                    match own::add(file, &home) {
+                        Ok(dir) => made.push(dir),
+                        Err(why) => refused.push(why),
+                    }
+                }
+                let _ = tell.send((made, refused));
+            });
+        match started {
+            Ok(_) => {
+                self.adding = Some(heard);
+                self.status = "adding\u{2026}".to_owned();
+            }
+            Err(error) => self.status = format!("could not start adding: {error}"),
+        }
+    }
+
+    fn collect_adding(&mut self, config: &Config, engine: &Engine) {
+        let Some(adding) = self.adding.as_ref() else {
+            return;
+        };
+        let (made, refused) = match adding.try_recv() {
+            Ok(added) => added,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                (Vec::new(), vec!["adding stopped unexpectedly".to_owned()])
+            }
+        };
+        self.adding = None;
+        self.refresh(config, engine);
+        if let Some(dir) = made.last() {
+            self.apply_to_target(dir, engine);
+        }
+        if !refused.is_empty() {
+            self.status = refused.join("; ");
+        } else if made.len() > 1 {
+            self.status = format!("added {} wallpapers", made.len());
+        }
+    }
+
     fn sync(&mut self, engine: &Engine) {
         let seen = engine.snapshot();
         self.owned = seen
@@ -231,8 +294,20 @@ impl Library {
     ) {
         self.collect();
         self.collect_scan();
+        self.collect_adding(config, engine);
         self.sync(engine);
-        if self.unsubscribing.is_some() || self.scanning.is_some() {
+
+        let dropped: Vec<PathBuf> = ctx.input(|input| {
+            input
+                .raw
+                .dropped_files
+                .iter()
+                .filter_map(|file| file.path.clone())
+                .collect()
+        });
+        self.add_own(dropped);
+
+        if self.unsubscribing.is_some() || self.scanning.is_some() || self.adding.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
         }
 
@@ -311,6 +386,22 @@ impl Library {
             .size(11.0)
             .color(theme::MUTED),
         );
+        ui.add_space(8.0);
+        if ui
+            .add_enabled(
+                self.adding.is_none(),
+                egui::Button::new("Add a picture or video\u{2026}")
+                    .min_size(Vec2::new(200.0, 28.0)),
+            )
+            .on_hover_text(
+                "Use one of your own files as a wallpaper. No Steam account or \
+                 Wallpaper Engine needed. You can also drop files on the window.",
+            )
+            .clicked()
+            && let Some(files) = pick_own()
+        {
+            self.add_own(files);
+        }
         ui.add_space(10.0);
 
         ui.label(RichText::new("Filter").size(11.0).color(theme::MUTED));
@@ -362,7 +453,7 @@ impl Library {
                     RichText::new(if self.items.is_empty() && self.scanning.is_some() {
                         "Reading your library\u{2026}"
                     } else if self.items.is_empty() {
-                        "No wallpapers installed yet — find some in the Workshop tab."
+                        "No wallpapers yet. Add a picture or video of your own, or find some in the Workshop tab."
                     } else {
                         "Nothing matches that filter."
                     })
@@ -426,7 +517,7 @@ impl Library {
 
                                 ui.separator();
                                 if ui
-                                    .button(RichText::new("Unsubscribe").color(theme::DANGER))
+                                    .button(RichText::new(remove_label(item)).color(theme::DANGER))
                                     .clicked()
                                 {
                                     self.selected = Some(*index);
@@ -470,9 +561,10 @@ impl Library {
                         {
                             self.selected = None;
                         }
-                        if crate::icons::button(ui, crate::icons::Icon::External, false)
-                            .on_hover_text("Open the Workshop page")
-                            .clicked()
+                        if !own::is_own(&item.id)
+                            && crate::icons::button(ui, crate::icons::Icon::External, false)
+                                .on_hover_text("Open the Workshop page")
+                                .clicked()
                         {
                             open(std::path::Path::new(&format!(
                                 "https://steamcommunity.com/sharedfiles/filedetails/?id={}",
@@ -504,7 +596,15 @@ impl Library {
 
                 ui.add_space(8.0);
                 ui.label(format!("{} · {}", item.kind, human_size(item.size)));
-                ui.label(RichText::new(&item.id).small().color(theme::MUTED));
+                ui.label(
+                    RichText::new(if own::is_own(&item.id) {
+                        "Your own file"
+                    } else {
+                        item.id.as_str()
+                    })
+                    .small()
+                    .color(theme::MUTED),
+                );
 
                 ui.add_space(12.0);
 
@@ -519,16 +619,22 @@ impl Library {
 
                 if self.confirming.as_deref() == Some(item.id.as_str()) {
                     ui.label(
-                        RichText::new("Remove it and tell Steam you no longer want it?")
-                            .small()
-                            .color(theme::MUTED),
+                        RichText::new(if own::is_own(&item.id) {
+                            "Remove it from your library? The file you added it from is kept."
+                        } else {
+                            "Remove it and tell Steam you no longer want it?"
+                        })
+                        .small()
+                        .color(theme::MUTED),
                     );
                     ui.add_space(6.0);
                     if ui
                         .add_sized(
                             [ui.available_width(), 32.0],
-                            egui::Button::new(RichText::new("Unsubscribe").color(theme::TEXT))
-                                .fill(theme::DANGER.gamma_multiply(0.7)),
+                            egui::Button::new(
+                                RichText::new(remove_label(&item)).color(theme::TEXT),
+                            )
+                            .fill(theme::DANGER.gamma_multiply(0.7)),
                         )
                         .clicked()
                     {
@@ -544,10 +650,14 @@ impl Library {
                 } else if ui
                     .add_sized(
                         [ui.available_width(), 32.0],
-                        egui::Button::new(RichText::new("Unsubscribe").color(theme::DANGER))
+                        egui::Button::new(RichText::new(remove_label(&item)).color(theme::DANGER))
                             .stroke(egui::Stroke::new(1.0_f32, theme::DANGER)),
                     )
-                    .on_hover_text("Removes the files and the subscription")
+                    .on_hover_text(if own::is_own(&item.id) {
+                        "Removes haru's copy; your original file stays where it is"
+                    } else {
+                        "Removes the files and the subscription"
+                    })
                     .clicked()
                 {
                     self.confirming = Some(item.id.clone());
@@ -703,6 +813,27 @@ impl Library {
         }
         shown
     }
+}
+
+/// What removing an item is called: an own file was never subscribed to.
+fn remove_label(item: &Installed) -> &'static str {
+    if own::is_own(&item.id) {
+        "Remove"
+    } else {
+        "Unsubscribe"
+    }
+}
+
+/// Asks for pictures and videos to add. `None` when the dialog was closed.
+fn pick_own() -> Option<Vec<PathBuf>> {
+    let mut both: Vec<&str> = own::PICTURES.to_vec();
+    both.extend(own::VIDEOS);
+    rfd::FileDialog::new()
+        .set_title("Add a picture or video")
+        .add_filter("Pictures and videos", &both)
+        .add_filter("Pictures", &own::PICTURES)
+        .add_filter("Videos", &own::VIDEOS)
+        .pick_files()
 }
 
 fn tile(
