@@ -240,7 +240,16 @@ impl Library {
                         Err(why) => refused.push(why),
                     }
                 }
+                let pictures: Vec<PathBuf> = made
+                    .iter()
+                    .filter(|dir| own::is_picture(dir))
+                    .cloned()
+                    .collect();
                 let _ = tell.send((made, refused));
+                // After telling the window, which needs nothing from it: a
+                // picture without a bake is still drawn, only baked when it
+                // first goes up.
+                haru_apply::install::prebake(&pictures);
             });
         match started {
             Ok(_) => {

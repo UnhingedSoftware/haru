@@ -91,6 +91,14 @@ fn walk(dir: &Path, depth: usize, found: &mut Vec<PathBuf>) {
     }
 }
 
+/// Whether the item folder `dir` that `add` made holds a picture.
+#[must_use]
+pub fn is_picture(dir: &Path) -> bool {
+    PICTURES
+        .iter()
+        .any(|ext| dir.join(format!("wallpaper.{ext}")).is_file())
+}
+
 /// Adds `file` to the library under `home` and returns the item's folder.
 ///
 /// The file is hard-linked when it sits on the same disk and copied when it
@@ -264,6 +272,7 @@ mod tests {
 
         let dir = added(&source, &home);
         assert!(dir.join("wallpaper.png").is_file());
+        assert!(is_picture(&dir));
         assert!(dir.join("preview.jpg").is_file());
 
         let found = crate::library::scan_dirs(&[home]);
@@ -287,6 +296,7 @@ mod tests {
 
         let dir = added(&source, &home);
         assert!(dir.join("wallpaper.mp4").is_file());
+        assert!(!is_picture(&dir));
         let project: serde_json::Value = std::fs::read_to_string(dir.join("project.json"))
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())

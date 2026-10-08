@@ -178,6 +178,28 @@ fn on_the_path() -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
+/// Has the renderer resize `pictures` ahead of time for every screen it has
+/// drawn on (`kirie prebake`), so the first time one goes up is as quick as
+/// the rest. Waits for it to finish, so call it off the window's thread.
+/// `false` when there is no renderer or it could not bake; the pictures are
+/// still drawn, only baked on first use instead.
+pub fn prebake(pictures: &[PathBuf]) -> bool {
+    if pictures.is_empty() {
+        return true;
+    }
+    let Some(binary) = installed() else {
+        return false;
+    };
+    crate::child::quiet(binary)
+        .arg("prebake")
+        .args(pictures)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
 #[must_use]
 pub fn version_of(binary: &Path) -> Option<String> {
     let spoke = crate::child::quiet(binary)
