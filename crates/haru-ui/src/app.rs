@@ -408,7 +408,9 @@ impl Haru {
         match reply {
             haru_workshop::Reply::Progress { done, total, .. } => {
                 let share = done.saturating_mul(100).checked_div(total).unwrap_or(0);
-                self.assets_note = format!("fetching Wallpaper Engine's assets… {share}%");
+                let megabytes = total.div_ceil(1_000_000);
+                self.assets_note =
+                    format!("fetching Wallpaper Engine's assets… {share}% of {megabytes} MB");
                 return;
             }
             haru_workshop::Reply::EngineAssets { dir } => {

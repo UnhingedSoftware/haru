@@ -6,6 +6,9 @@ use tapline::{BrowsePage, BrowseQuery, Session, WorkshopItem};
 
 pub const WALLPAPER_ENGINE: tapline_ids::AppId = tapline_ids::AppId(431_960);
 
+/// The one folder of Wallpaper Engine's install that kirie draws scenes with.
+const ENGINE_ASSETS_FOLDER: &str = "assets";
+
 #[derive(Debug, Clone)]
 pub enum Request {
     Browse(BrowseQuery),
@@ -229,8 +232,11 @@ async fn engine_assets(
     id: RequestId,
 ) -> Reply {
     let app = tapline_ids::AppId(haru_core::engine::WALLPAPER_ENGINE_APP);
+    // kirie reads nothing of Wallpaper Engine but its `assets` folder, so the
+    // program itself, its web runtime and its UI are left on Steam's servers.
     let options = tapline::InstallOptions {
         install_dir: into.to_owned(),
+        paths: vec![ENGINE_ASSETS_FOLDER.to_owned()],
         ..tapline::InstallOptions::default()
     };
 
@@ -260,7 +266,7 @@ async fn engine_assets(
 
     match session.install_observed(app, &options, &mut observe).await {
         Ok(_) => Reply::EngineAssets {
-            dir: into.join("assets"),
+            dir: into.join(ENGINE_ASSETS_FOLDER),
         },
         Err(error) if error.needs_login() => Reply::NeedsAccount,
         Err(error) => Reply::Failed(error.to_string()),
