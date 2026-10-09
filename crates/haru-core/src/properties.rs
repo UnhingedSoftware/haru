@@ -61,12 +61,19 @@ impl Property {
     }
 }
 
+/// An item's `project.json`, from its folder or from the package it was
+/// repacked into.
+fn project(item: &Path) -> Option<serde_json::Value> {
+    if crate::package::is_package(item) {
+        return crate::package::Package::open(item)?.project();
+    }
+    let text = std::fs::read_to_string(item.join("project.json")).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
 #[must_use]
 pub fn read(dir: &Path) -> Vec<Property> {
-    let Ok(text) = std::fs::read_to_string(dir.join("project.json")) else {
-        return Vec::new();
-    };
-    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) else {
+    let Some(parsed) = project(dir) else {
         return Vec::new();
     };
     let Some(properties) = parsed

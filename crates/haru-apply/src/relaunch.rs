@@ -33,7 +33,7 @@ impl Relaunch {
             .lock()
             .ok()
             .and_then(|showing| showing.clone())
-            .filter(|dir| dir.is_dir());
+            .filter(|dir| haru_core::library::still_there(dir));
         let Some(dir) = showing else {
             return Ok(());
         };

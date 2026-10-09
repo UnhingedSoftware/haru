@@ -9,6 +9,7 @@ pub mod launch;
 mod monitors;
 mod offscreen;
 mod relaunch;
+pub mod repack;
 mod socket;
 pub mod startup;
 mod stream;

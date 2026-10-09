@@ -730,7 +730,12 @@ impl Library {
             }));
         }
 
-        self.status = match std::fs::remove_dir_all(&item.dir) {
+        let removed = if item.dir.is_file() {
+            std::fs::remove_file(&item.dir)
+        } else {
+            std::fs::remove_dir_all(&item.dir)
+        };
+        self.status = match removed {
             Ok(()) => {
                 self.items.retain(|other| other.id != item.id);
                 self.selected = None;
