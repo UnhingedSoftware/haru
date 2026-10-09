@@ -11,6 +11,9 @@ pub struct Installed {
     pub preview: Option<PathBuf>,
     pub size: u64,
     pub installed: std::time::SystemTime,
+    /// For a package copied from a folder the Steam client keeps, that
+    /// folder: removing the item removes both.
+    pub source: Option<PathBuf>,
 }
 
 #[must_use]
@@ -98,7 +101,53 @@ pub fn scan(roots: &[PathBuf]) -> Vec<Installed> {
 #[must_use]
 pub fn scan_all(roots: &[PathBuf]) -> Vec<Installed> {
     let packages = crate::package::home().map_or_else(Vec::new, |dir| scan_packages(&dir));
-    merge(packages, scan_dirs(&all_dirs(roots)))
+    let folders = scan_dirs(&all_dirs(roots));
+    let copies =
+        crate::package::copies().map_or_else(Vec::new, |dir| current_copies(&dir, &folders));
+    merge(packages, merge(copies, folders))
+}
+
+/// The Wallpaper Engine items in the Workshop folders under `roots`, which
+/// the Steam client (or haru, before it repacks them) keeps as folders.
+#[must_use]
+pub fn workshop_items(roots: &[PathBuf]) -> Vec<Installed> {
+    scan_dirs(&content_dirs(roots))
+}
+
+/// Whether the package at `copy` was made from `item_dir` as it is now: not
+/// older than the folder or its `project.json`. Steam rewrites an item's
+/// files when it updates one, so an older copy is out of date.
+#[must_use]
+pub fn copy_is_current(copy: &Path, item_dir: &Path) -> bool {
+    let modified = |path: &Path| {
+        std::fs::metadata(path)
+            .and_then(|meta| meta.modified())
+            .ok()
+    };
+    let Some(made) = modified(copy) else {
+        return false;
+    };
+    [item_dir.to_owned(), item_dir.join("project.json")]
+        .iter()
+        .filter_map(|path| modified(path))
+        .all(|changed| changed <= made)
+}
+
+/// The packages in `dir` copied from one of `folders` and still current, each
+/// taking its folder's place in the library. A copy whose folder is gone or
+/// newer is left out, so the folder shows until the copy is made again.
+fn current_copies(dir: &Path, folders: &[Installed]) -> Vec<Installed> {
+    scan_packages(dir)
+        .into_iter()
+        .filter_map(|copy| {
+            let folder = folders.iter().find(|folder| folder.id == copy.id)?;
+            copy_is_current(&copy.dir, &folder.dir).then(|| Installed {
+                installed: folder.installed,
+                source: Some(folder.dir.clone()),
+                ..copy
+            })
+        })
+        .collect()
 }
 
 /// Whether a wallpaper haru remembered is still there to put up: an item's
@@ -173,6 +222,7 @@ fn read_package(path: &Path) -> Option<Installed> {
         size: meta.len(),
         installed: meta.modified().unwrap_or(std::time::UNIX_EPOCH),
         dir: path.to_owned(),
+        source: None,
     })
 }
 
@@ -320,6 +370,7 @@ fn read(dir: &Path, id: String) -> Option<Installed> {
         size: directory_size(dir),
         installed,
         dir: dir.to_owned(),
+        source: None,
     })
 }
 
@@ -348,6 +399,44 @@ fn directory_size(dir: &Path) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_copy_stands_in_for_its_folder_only_while_current() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use crate::package::tests::{CONVERTED, PROJECT, write_package};
+
+        let dir = std::env::temp_dir().join(format!("haru-copies-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let content = dir.join("content");
+        let copies = dir.join("copies");
+        std::fs::create_dir_all(content.join("1388331347"))?;
+        std::fs::create_dir_all(&copies)?;
+        std::fs::write(content.join("1388331347/project.json"), PROJECT)?;
+        let package = copies.join("1388331347.kpk");
+        write_package(&package, CONVERTED, &[("project.json", PROJECT, true)])?;
+        let folders = scan_dirs(std::slice::from_ref(&content));
+
+        let listed = current_copies(&copies, &folders);
+        let [copy] = listed.as_slice() else {
+            return Err("the current copy was not listed".into());
+        };
+        assert_eq!(copy.dir, package);
+        assert_eq!(copy.source.as_ref(), Some(&content.join("1388331347")));
+        assert_eq!(merge(vec![copy.clone()], folders.clone()).len(), 1);
+
+        // Steam updates the item after the copy was made.
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+        std::fs::File::options()
+            .write(true)
+            .open(content.join("1388331347/project.json"))?
+            .set_modified(later)?;
+        assert!(current_copies(&copies, &folders).is_empty());
+
+        // And a copy whose folder is gone is not listed either.
+        assert!(current_copies(&copies, &[]).is_empty());
+        std::fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
 
     #[test]
     fn a_package_lists_under_its_workshop_id_with_its_preview()

@@ -33,6 +33,14 @@ pub fn home() -> Option<PathBuf> {
     crate::data_home().map(|base| base.join("haru/packages"))
 }
 
+/// Where haru keeps packages copied from items the Steam client downloaded.
+/// Steam fetches a folder again if it goes missing, so those folders stay and
+/// the copy sits beside them; see `crate::library::copy_is_current`.
+#[must_use]
+pub fn copies() -> Option<PathBuf> {
+    home().map(|dir| dir.join("steam"))
+}
+
 /// Whether `path` names a package rather than an item folder.
 #[must_use]
 pub fn is_package(path: &Path) -> bool {
