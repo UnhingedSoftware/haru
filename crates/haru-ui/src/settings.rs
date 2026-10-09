@@ -362,8 +362,11 @@ impl Settings {
                 );
                 ui.add_space(4.0);
                 if ui
-                    .button("Fetch engine assets (377 MB)")
-                    .on_hover_text("Downloaded with your own account; no Steam client needed")
+                    .button("Fetch engine assets")
+                    .on_hover_text(
+                        "Only the assets folder kirie draws with, downloaded with your own \
+                         account; no Steam client needed",
+                    )
                     .clicked()
                 {
                     actions.fetch_assets = true;

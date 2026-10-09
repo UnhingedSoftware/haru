@@ -73,6 +73,9 @@ pub struct Library {
     adding: Option<Receiver<Added>>,
     /// Files dropped while an add was running, added once it lands.
     queued: Vec<PathBuf>,
+    /// Steam client items being copied into packages, with the roots to
+    /// rescan if any copy changed. Converting a large item takes a while.
+    mirroring: Option<(Receiver<bool>, Vec<PathBuf>)>,
 }
 
 /// What adding files produced: the folders made, and why any were refused.
@@ -123,6 +126,7 @@ impl Library {
             removed: Vec::new(),
             adding: None,
             queued: Vec::new(),
+            mirroring: None,
             confirming: None,
             settings: crate::props::Panel::default(),
             workshop,
@@ -155,11 +159,58 @@ impl Library {
     pub fn refresh(&mut self, config: &Config, engine: &Engine) {
         let roots = config.libraries();
         if self.scanning.is_some() {
+            self.rescan = Some(roots.clone());
+        } else {
+            self.start_scan(roots.clone());
+        }
+        self.start_mirror(roots);
+        self.sync(engine);
+    }
+
+    /// Copies the Steam client's items into packages on a thread of its own,
+    /// unless that is already running. haru's own downloads are left out:
+    /// they are repacked as they land.
+    fn start_mirror(&mut self, roots: Vec<PathBuf>) {
+        if self.mirroring.is_some() {
+            return;
+        }
+        let own = haru_core::engine::library_home();
+        let steam: Vec<PathBuf> = roots
+            .iter()
+            .filter(|root| Some(*root) != own.as_ref())
+            .cloned()
+            .collect();
+        let (tell, heard) = channel();
+        let started = std::thread::Builder::new()
+            .name("haru-library-mirror".to_owned())
+            .spawn(move || {
+                let _ = tell.send(haru_apply::repack::mirror(&steam));
+            });
+        if started.is_ok() {
+            self.mirroring = Some((heard, roots));
+        }
+    }
+
+    fn collect_mirror(&mut self) {
+        let Some((mirroring, _)) = self.mirroring.as_ref() else {
+            return;
+        };
+        let changed = match mirroring.try_recv() {
+            Ok(changed) => changed,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => false,
+        };
+        let Some((_, roots)) = self.mirroring.take() else {
+            return;
+        };
+        if !changed {
+            return;
+        }
+        if self.scanning.is_some() {
             self.rescan = Some(roots);
         } else {
             self.start_scan(roots);
         }
-        self.sync(engine);
     }
 
     fn start_scan(&mut self, roots: Vec<PathBuf>) {
@@ -326,6 +377,7 @@ impl Library {
     ) {
         self.collect();
         self.collect_scan();
+        self.collect_mirror();
         self.collect_adding(config, engine);
         self.sync(engine);
 
@@ -341,6 +393,8 @@ impl Library {
 
         if self.unsubscribing.is_some() || self.scanning.is_some() || self.adding.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
+        } else if self.mirroring.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_secs(1));
         }
 
         if sidebar {
@@ -730,7 +784,17 @@ impl Library {
             }));
         }
 
-        self.status = match std::fs::remove_dir_all(&item.dir) {
+        let removed = if item.dir.is_file() {
+            std::fs::remove_file(&item.dir)
+        } else {
+            std::fs::remove_dir_all(&item.dir)
+        };
+        // A copy's folder goes too, or it would come back as the item.
+        let removed = removed.and_then(|()| match &item.source {
+            Some(folder) if folder.is_dir() => std::fs::remove_dir_all(folder),
+            _ => Ok(()),
+        });
+        self.status = match removed {
             Ok(()) => {
                 self.items.retain(|other| other.id != item.id);
                 self.selected = None;
@@ -973,6 +1037,7 @@ mod tests {
             preview: None,
             size,
             installed: std::time::UNIX_EPOCH,
+            source: None,
         }
     }
 

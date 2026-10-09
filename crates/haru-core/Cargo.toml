@@ -8,7 +8,9 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+blake3 = { workspace = true }
 image = { workspace = true }
+lz4_flex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tapline = { workspace = true }

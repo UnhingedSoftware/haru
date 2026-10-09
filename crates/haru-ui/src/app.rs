@@ -408,7 +408,9 @@ impl Haru {
         match reply {
             haru_workshop::Reply::Progress { done, total, .. } => {
                 let share = done.saturating_mul(100).checked_div(total).unwrap_or(0);
-                self.assets_note = format!("fetching Wallpaper Engine's assets… {share}%");
+                let megabytes = total.div_ceil(1_000_000);
+                self.assets_note =
+                    format!("fetching Wallpaper Engine's assets… {share}% of {megabytes} MB");
                 return;
             }
             haru_workshop::Reply::EngineAssets { dir } => {
@@ -583,8 +585,7 @@ impl Haru {
                 let wallpaper = found
                     .current
                     .or_else(|| self.config.screens.get(&found.name).cloned())?;
-                wallpaper
-                    .is_dir()
+                haru_core::library::still_there(&wallpaper)
                     .then(|| haru_apply::launch::Plan::showing(found.name, wallpaper))
             })
             .collect()
@@ -626,7 +627,7 @@ impl Haru {
                     .find(|(had, _)| *had == name)
                     .map(|(_, wallpaper)| wallpaper.clone())
                     .or_else(|| self.config.screens.get(&name).cloned())
-                    .filter(|wallpaper| wallpaper.is_dir());
+                    .filter(|wallpaper| haru_core::library::still_there(wallpaper));
                 haru_apply::launch::Plan {
                     screen: name,
                     wallpaper,
@@ -669,7 +670,7 @@ impl Haru {
                     .config
                     .screens
                     .iter()
-                    .find(|(_, wallpaper)| wallpaper.is_dir())
+                    .find(|(_, wallpaper)| haru_core::library::still_there(wallpaper))
                     .map(|(screen, wallpaper)| (screen.clone(), wallpaper.clone()));
                 match last {
                     Some((screen, wallpaper)) => self.start_renderer(&screen, &wallpaper),

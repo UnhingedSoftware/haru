@@ -66,6 +66,9 @@ pub struct Browser {
     fetching: Option<RequestId>,
     installed: Vec<u64>,
     landed: Option<PathBuf>,
+    /// An item haru downloaded being repacked into one package; it lands
+    /// as the package, or as its folder if that fails.
+    repacking: Option<(u64, std::sync::mpsc::Receiver<PathBuf>)>,
     fit: bool,
     settling: Option<(u32, f64)>,
     settings: crate::props::Panel,
@@ -120,6 +123,7 @@ impl Browser {
             fetching: None,
             installed: Vec::new(),
             landed: None,
+            repacking: None,
             fit: true,
             settling: None,
             settings: crate::props::Panel::default(),
@@ -164,7 +168,7 @@ impl Browser {
         self.collect();
         self.check_files(ctx);
 
-        if self.awaiting.is_some() || self.fetching.is_some() {
+        if self.awaiting.is_some() || self.fetching.is_some() || self.repacking.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
         }
 
@@ -221,6 +225,18 @@ impl Browser {
             }
         }
 
+        if let Some((item, landed)) = &self.repacking {
+            match landed.try_recv() {
+                Ok(path) => {
+                    self.installed.push(*item);
+                    self.landed = Some(path);
+                    self.repacking = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.repacking = None,
+            }
+        }
+
         while let Some(id) = self.fetching
             && let Some(reply) = self.workshop.take(id)
         {
@@ -235,9 +251,12 @@ impl Browser {
                 Reply::Installed { id: item, dir } => {
                     self.fetching = None;
                     self.downloading = None;
-                    self.installed.push(item);
                     self.status = Status::Idle;
-                    self.landed = Some(dir);
+                    let (done, landed) = std::sync::mpsc::channel();
+                    std::thread::spawn(move || {
+                        let _ = done.send(haru_apply::repack::repack(&dir).unwrap_or(dir));
+                    });
+                    self.repacking = Some((item, landed));
                 }
                 Reply::Subscribed => {
                     self.fetching = None;
@@ -520,6 +539,11 @@ impl Browser {
                     .join("project.json")
                     .is_file()
             })
+            || haru_core::package::home().is_some_and(|packages| {
+                packages
+                    .join(format!("{id}.{}", haru_core::package::EXTENSION))
+                    .is_file()
+            })
     }
 
     fn download_row(&mut self, ui: &mut egui::Ui, found: &BrowseResult) {
@@ -537,6 +561,20 @@ impl Browser {
             });
             return;
         }
+        if let Some((repacking, _)) = &self.repacking
+            && *repacking == id
+        {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(
+                    RichText::new("Packing it into one file\u{2026}")
+                        .small()
+                        .color(theme::MUTED),
+                );
+            });
+            return;
+        }
+
         if let Some((waiting, _, _)) = self.landing
             && waiting == id
         {

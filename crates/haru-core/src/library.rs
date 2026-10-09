@@ -11,6 +11,9 @@ pub struct Installed {
     pub preview: Option<PathBuf>,
     pub size: u64,
     pub installed: std::time::SystemTime,
+    /// For a package copied from a folder the Steam client keeps, that
+    /// folder: removing the item removes both.
+    pub source: Option<PathBuf>,
 }
 
 #[must_use]
@@ -92,11 +95,163 @@ pub fn scan(roots: &[PathBuf]) -> Vec<Installed> {
     scan_dirs(&content_dirs(roots))
 }
 
-/// Everything the library shows: the Workshop items under `roots`, and the
-/// user's own pictures and videos (see `crate::own`).
+/// Everything the library shows: the packages haru made from the items it
+/// downloaded (see `crate::package`), the Workshop items under `roots`, and
+/// the user's own pictures and videos (see `crate::own`).
 #[must_use]
 pub fn scan_all(roots: &[PathBuf]) -> Vec<Installed> {
-    scan_dirs(&all_dirs(roots))
+    let packages = crate::package::home().map_or_else(Vec::new, |dir| scan_packages(&dir));
+    let folders = scan_dirs(&all_dirs(roots));
+    let copies =
+        crate::package::copies().map_or_else(Vec::new, |dir| current_copies(&dir, &folders));
+    merge(packages, merge(copies, folders))
+}
+
+/// The Wallpaper Engine items in the Workshop folders under `roots`, which
+/// the Steam client (or haru, before it repacks them) keeps as folders.
+#[must_use]
+pub fn workshop_items(roots: &[PathBuf]) -> Vec<Installed> {
+    scan_dirs(&content_dirs(roots))
+}
+
+/// Whether the package at `copy` was made from `item_dir` as it is now: not
+/// older than the folder or its `project.json`. Steam rewrites an item's
+/// files when it updates one, so an older copy is out of date.
+#[must_use]
+pub fn copy_is_current(copy: &Path, item_dir: &Path) -> bool {
+    let modified = |path: &Path| {
+        std::fs::metadata(path)
+            .and_then(|meta| meta.modified())
+            .ok()
+    };
+    let Some(made) = modified(copy) else {
+        return false;
+    };
+    [item_dir.to_owned(), item_dir.join("project.json")]
+        .iter()
+        .filter_map(|path| modified(path))
+        .all(|changed| changed <= made)
+}
+
+/// The packages in `dir` copied from one of `folders` and still current, each
+/// taking its folder's place in the library. A copy whose folder is gone or
+/// newer is left out, so the folder shows until the copy is made again.
+fn current_copies(dir: &Path, folders: &[Installed]) -> Vec<Installed> {
+    scan_packages(dir)
+        .into_iter()
+        .filter_map(|copy| {
+            let folder = folders.iter().find(|folder| folder.id == copy.id)?;
+            copy_is_current(&copy.dir, &folder.dir).then(|| Installed {
+                installed: folder.installed,
+                source: Some(folder.dir.clone()),
+                ..copy
+            })
+        })
+        .collect()
+}
+
+/// Whether a wallpaper haru remembered is still there to put up: an item's
+/// folder, or the package it was repacked into.
+#[must_use]
+pub fn still_there(wallpaper: &Path) -> bool {
+    wallpaper.is_dir() || (wallpaper.is_file() && crate::package::is_package(wallpaper))
+}
+
+/// `first`, then whatever of `rest` has an id `first` lacks, newest first.
+fn merge(first: Vec<Installed>, rest: Vec<Installed>) -> Vec<Installed> {
+    let mut items = first;
+    for item in rest {
+        if !items.iter().any(|known| known.id == item.id) {
+            items.push(item);
+        }
+    }
+    items.sort_by_key(|item| std::cmp::Reverse(item.installed));
+    items
+}
+
+/// The packages directly inside `dir`. A package's preview is copied out
+/// once, into `.previews` beside them, for the picture decoder to read.
+#[must_use]
+pub fn scan_packages(dir: &Path) -> Vec<Installed> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut items: Vec<Installed> = Vec::new();
+    for path in entries.flatten().map(|entry| entry.path()) {
+        let hidden = path
+            .file_name()
+            .is_none_or(|name| name.to_string_lossy().starts_with('.'));
+        if hidden || !path.is_file() || !crate::package::is_package(&path) {
+            continue;
+        }
+        if let Some(item) = read_package(&path)
+            && !items.iter().any(|known| known.id == item.id)
+        {
+            items.push(item);
+        }
+    }
+    items.sort_by_key(|item| std::cmp::Reverse(item.installed));
+    items
+}
+
+fn read_package(path: &Path) -> Option<Installed> {
+    let package = crate::package::Package::open(path)?;
+    let id = package.library_id();
+    let project = package.project();
+    let title = Some(package.manifest.title.trim())
+        .filter(|title| !title.is_empty())
+        .map_or_else(|| id.clone(), crate::plain_text);
+    let kind = match &project {
+        Some(project) => project
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .map_or_else(|| "scene".to_owned(), str::to_lowercase),
+        None => package.manifest.kind.clone(),
+    };
+    let preview = package
+        .manifest
+        .preview
+        .as_deref()
+        .and_then(|name| package_preview(&package, path, name));
+    let meta = std::fs::metadata(path).ok()?;
+    Some(Installed {
+        id,
+        title,
+        kind,
+        preview,
+        size: meta.len(),
+        installed: meta.modified().unwrap_or(std::time::UNIX_EPOCH),
+        dir: path.to_owned(),
+        source: None,
+    })
+}
+
+/// The package's preview as a file, copied out the first time it is asked
+/// for and named after the package's fingerprint, so a changed package gets
+/// a fresh copy.
+fn package_preview(package: &crate::package::Package, path: &Path, name: &str) -> Option<PathBuf> {
+    let ext = Path::new(name)
+        .extension()?
+        .to_string_lossy()
+        .to_ascii_lowercase();
+    if !ext.bytes().all(|b| b.is_ascii_alphanumeric()) {
+        return None;
+    }
+    let previews = path.parent()?.join(".previews");
+    let file = previews.join(format!("{}.{ext}", package.fingerprint()));
+    if file.is_file() {
+        return Some(file);
+    }
+    let bytes = package.read(name)?;
+    std::fs::create_dir_all(&previews).ok()?;
+    let partial = previews.join(format!(
+        ".{}.{}.partial",
+        package.fingerprint(),
+        std::process::id()
+    ));
+    std::fs::write(&partial, bytes).ok()?;
+    std::fs::rename(&partial, &file).ok()?;
+    Some(file)
 }
 
 /// The item directories under `roots` that are not among `known`, which is
@@ -215,6 +370,7 @@ fn read(dir: &Path, id: String) -> Option<Installed> {
         size: directory_size(dir),
         installed,
         dir: dir.to_owned(),
+        source: None,
     })
 }
 
@@ -243,6 +399,90 @@ fn directory_size(dir: &Path) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_copy_stands_in_for_its_folder_only_while_current() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use crate::package::tests::{CONVERTED, PROJECT, write_package};
+
+        let dir = std::env::temp_dir().join(format!("haru-copies-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let content = dir.join("content");
+        let copies = dir.join("copies");
+        std::fs::create_dir_all(content.join("1388331347"))?;
+        std::fs::create_dir_all(&copies)?;
+        std::fs::write(content.join("1388331347/project.json"), PROJECT)?;
+        let package = copies.join("1388331347.kpk");
+        write_package(&package, CONVERTED, &[("project.json", PROJECT, true)])?;
+        let folders = scan_dirs(std::slice::from_ref(&content));
+
+        let listed = current_copies(&copies, &folders);
+        let [copy] = listed.as_slice() else {
+            return Err("the current copy was not listed".into());
+        };
+        assert_eq!(copy.dir, package);
+        assert_eq!(copy.source.as_ref(), Some(&content.join("1388331347")));
+        assert_eq!(merge(vec![copy.clone()], folders.clone()).len(), 1);
+
+        // Steam updates the item after the copy was made.
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+        std::fs::File::options()
+            .write(true)
+            .open(content.join("1388331347/project.json"))?
+            .set_modified(later)?;
+        assert!(current_copies(&copies, &folders).is_empty());
+
+        // And a copy whose folder is gone is not listed either.
+        assert!(current_copies(&copies, &[]).is_empty());
+        std::fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_package_lists_under_its_workshop_id_with_its_preview()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::package::tests::{CONVERTED, PROJECT, write_package};
+
+        let dir = std::env::temp_dir().join(format!("haru-packages-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir)?;
+        write_package(
+            &dir.join("1388331347.kpk"),
+            CONVERTED,
+            &[
+                ("preview.jpg", b"jpeg", false),
+                ("project.json", PROJECT, true),
+            ],
+        )?;
+        std::fs::write(dir.join("notes.txt"), b"not a package")?;
+
+        let items = scan_packages(&dir);
+        let [item] = items.as_slice() else {
+            return Err(format!("expected one item, found {}", items.len()).into());
+        };
+        assert_eq!(item.id, "1388331347");
+        assert_eq!(item.title, "Rainy street");
+        assert_eq!(item.kind, "scene");
+        assert_eq!(item.dir, dir.join("1388331347.kpk"));
+        let preview = item.preview.as_ref().ok_or("no preview")?;
+        assert_eq!(std::fs::read(preview)?, b"jpeg");
+
+        // The package wins over a folder with the same id.
+        let folder = Installed {
+            dir: dir.join("1388331347"),
+            ..item.clone()
+        };
+        let merged = merge(items.clone(), vec![folder]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(
+            merged.first().map(|item| &item.dir),
+            Some(&dir.join("1388331347.kpk"))
+        );
+
+        assert_eq!(crate::properties::read(&item.dir).len(), 1);
+        std::fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
 
     #[test]
     fn the_steam_root_matches_where_this_os_keeps_it() {
