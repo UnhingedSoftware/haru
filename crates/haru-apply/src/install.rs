@@ -178,6 +178,54 @@ fn on_the_path() -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
+/// Has the renderer resize `pictures` ahead of time for every screen it has
+/// drawn on (`kirie prebake`), so the first time one goes up is as quick as
+/// the rest. Waits for it to finish, so call it off the window's thread.
+/// `false` when there is no renderer or it could not bake; the pictures are
+/// still drawn, only baked on first use instead.
+pub fn prebake(pictures: &[PathBuf]) -> bool {
+    if pictures.is_empty() {
+        return true;
+    }
+    let Some(binary) = installed() else {
+        return false;
+    };
+    let Ok(mut child) = crate::child::quiet(binary)
+        .arg("prebake")
+        .args(pictures)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    // A large photo takes a second or two per screen size; a renderer that
+    // hangs must not hold the adding thread or its process forever.
+    let count = u32::try_from(pictures.len()).unwrap_or(u32::MAX);
+    let deadline = PREBAKE_BASE
+        .saturating_add(PREBAKE_EACH.saturating_mul(count))
+        .min(PREBAKE_MOST);
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) if started.elapsed() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Ok(None) | Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
+}
+
+const PREBAKE_BASE: std::time::Duration = std::time::Duration::from_secs(10);
+const PREBAKE_EACH: std::time::Duration = std::time::Duration::from_secs(20);
+const PREBAKE_MOST: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
 #[must_use]
 pub fn version_of(binary: &Path) -> Option<String> {
     let spoke = crate::child::quiet(binary)
@@ -209,12 +257,14 @@ pub fn destination() -> Option<PathBuf> {
     Some(haru_core::runtime_dir().join("bin").join(RENDERER))
 }
 
+/// Whether kirie publishes a build for this machine: the release carries
+/// `kirie-macos-aarch64` and no Intel Mac build.
 #[must_use]
 pub const fn supported() -> bool {
     cfg!(any(
         all(target_os = "linux", target_arch = "x86_64"),
         all(windows, target_arch = "x86_64"),
-        target_os = "macos"
+        all(target_os = "macos", target_arch = "aarch64")
     ))
 }
 
@@ -227,15 +277,11 @@ pub struct Build {
 }
 
 pub fn latest(web: Web) -> Result<Build, String> {
-    latest_from(REPOSITORY, &web.asset())
+    newest_from(REPOSITORY, &web.asset(), false)
 }
 
 pub fn latest_including_betas(web: Web) -> Result<Build, String> {
     newest_from(REPOSITORY, &web.asset(), true)
-}
-
-pub fn latest_from(repository: &str, asset: &str) -> Result<Build, String> {
-    newest_from(repository, asset, false)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -392,9 +438,15 @@ pub fn fetch(
     let parent = target.parent().ok_or("no directory to install into")?;
     std::fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
 
-    let response = ureq::get(&build.url)
+    // A per-read timeout rather than `.timeout(DEADLINE)`: ureq applies that
+    // one to the whole body too, so a large build on a slow line was cut off
+    // at 30 seconds however steadily it was arriving.
+    let response = ureq::AgentBuilder::new()
+        .timeout_connect(DEADLINE)
+        .timeout_read(DEADLINE)
+        .build()
+        .get(&build.url)
         .set("User-Agent", AGENT)
-        .timeout(DEADLINE)
         .call()
         .map_err(|error| format!("the download failed ({error})"))?;
 
@@ -450,8 +502,13 @@ fn write(
 ) -> Result<(), String> {
     const CHUNK: usize = 64 * 1024;
 
-    let mut file =
-        std::fs::File::create(staged).map_err(|error| format!("cannot write it ({error})"))?;
+    // `create_new` so that a file or link already at this name is never
+    // written through.
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(staged)
+        .map_err(|error| format!("cannot write it ({error})"))?;
     let mut body = response.into_reader().take(MAX_BYTES);
     let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
     let mut buffer = vec![0_u8; CHUNK];

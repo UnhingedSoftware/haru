@@ -19,11 +19,6 @@ impl Kirie {
         }
     }
 
-    #[must_use]
-    pub fn socket(&self) -> &Path {
-        &self.socket
-    }
-
     fn ask(&self, line: &str) -> Result<Vec<String>, String> {
         let stream = UnixStream::connect(&self.socket)
             .map_err(|error| format!("the renderer is not reachable ({error})"))?;

@@ -139,10 +139,16 @@ fn work(say: &std::sync::mpsc::Sender<Word>, betas: bool, web: Option<install::W
 
 fn take(say: &std::sync::mpsc::Sender<Word>, build: &Build, myself: bool) -> String {
     let what = if myself { "haru" } else { "the renderer" };
+    // Once per percent rather than once per 64 KB read, which was thousands
+    // of notes for one download.
+    let mut last: Option<Option<u64>> = None;
     let mut progress = |done: u64, size: u64| {
-        let share = done
-            .saturating_mul(100)
-            .checked_div(size)
+        let percent = done.saturating_mul(100).checked_div(size);
+        if last == Some(percent) {
+            return;
+        }
+        last = Some(percent);
+        let share = percent
             .map(|percent| format!(" {percent}%"))
             .unwrap_or_default();
         let _ = say.send(Word::Note(format!("fetching {what} {}{share}", build.tag)));

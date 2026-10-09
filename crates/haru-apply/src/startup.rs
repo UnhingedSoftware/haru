@@ -60,6 +60,15 @@ pub fn enabled() -> bool {
 }
 
 pub fn enable(command: &[String], environment: &[(String, String)]) -> Result<(), String> {
+    // Every format below is line-based: a line break inside a path would end
+    // the line and start a directive of its own.
+    let broken = command
+        .iter()
+        .chain(environment.iter().flat_map(|(key, value)| [key, value]))
+        .any(|part| part.contains(['\n', '\r', '\0']));
+    if broken {
+        return Err("a path with a line break in it cannot go in a login entry".to_owned());
+    }
     let path = entry().ok_or("no home directory to install into")?;
     let parent = path.parent().ok_or("no directory to install into")?;
     std::fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
@@ -179,12 +188,17 @@ pub fn plist(command: &[String], environment: &[(String, String)]) -> String {
 pub fn unit(command: &[String], environment: &[(String, String)]) -> String {
     let line = command
         .iter()
-        .map(|part| quote(part))
+        .map(|part| unit_word(part, true))
         .collect::<Vec<_>>()
         .join(" ");
     let variables = environment
         .iter()
-        .map(|(key, value)| format!("Environment={key}={}\n", quote(value)))
+        .map(|(key, value)| {
+            format!(
+                "Environment={}\n",
+                unit_word(&format!("{key}={value}"), false)
+            )
+        })
         .collect::<String>();
 
     format!(
@@ -254,20 +268,21 @@ fn literal(text: &str) -> String {
 pub fn desktop_entry(command: &[String], environment: &[(String, String)]) -> String {
     let exported = environment
         .iter()
-        .map(|(key, value)| format!("{key}={} ", quote(value)))
+        .map(|(key, value)| format!("{key}={} ", shell_word(value)))
         .collect::<String>();
     let line = command
         .iter()
-        .map(|part| quote(part))
+        .map(|part| shell_word(part))
         .collect::<Vec<_>>()
         .join(" ");
+    let script = desktop_word(&format!("{exported}exec {line}"));
 
     format!(
         "[Desktop Entry]\n\
          Type=Application\n\
          Name=kirie\n\
          Comment=Put the wallpaper up at login\n\
-         Exec=sh -c \"{exported}exec {line}\"\n\
+         Exec=sh -c {script}\n\
          Terminal=false\n\
          X-GNOME-Autostart-enabled=true\n"
     )
@@ -279,12 +294,60 @@ fn escape(text: &str) -> String {
         .replace('>', "&gt;")
 }
 
-fn quote(text: &str) -> String {
-    if text.contains(' ') || text.contains('"') {
-        format!("\"{}\"", text.replace('"', "\\\""))
-    } else {
+/// Characters no layer below treats specially, so a word made only of them
+/// needs no quoting anywhere.
+fn plain(text: &str) -> bool {
+    !text.is_empty()
+        && text
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_./=:,+@".contains(c))
+}
+
+/// `text` as one `sh` word. Single quotes leave everything inside literal, so
+/// a `$` or a backtick in a path cannot run anything.
+fn shell_word(text: &str) -> String {
+    if plain(text) {
         text.to_owned()
+    } else {
+        format!("'{}'", text.replace('\'', r"'\''"))
     }
+}
+
+/// `text` as one argument of a desktop entry's `Exec` line.
+///
+/// The spec reads the line twice: once as a key-file value, where `\\` stands
+/// for a backslash, and then as a command line, where inside double quotes
+/// `"`, `` ` ``, `$` and `\\` each take a backslash. `%` starts a field code
+/// and is doubled.
+pub(crate) fn desktop_word(text: &str) -> String {
+    if plain(text) {
+        return text.to_owned();
+    }
+    let mut quoted = String::from("\"");
+    for c in text.chars() {
+        if matches!(c, '"' | '`' | '$' | '\\') {
+            quoted.push('\\');
+        }
+        quoted.push(c);
+    }
+    quoted.push('"');
+    quoted.replace('\\', "\\\\").replace('%', "%%")
+}
+
+/// `text` as one word of a systemd unit line: double-quoted with C escapes,
+/// `%` doubled so it is not read as a specifier and, on an `Exec` line, `$`
+/// doubled so it is not read as a variable.
+fn unit_word(text: &str, exec: bool) -> String {
+    let escaped = text.replace('%', "%%");
+    let escaped = if exec {
+        escaped.replace('$', "$$")
+    } else {
+        escaped
+    };
+    if plain(text) {
+        return escaped;
+    }
+    format!("\"{}\"", escaped.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 #[cfg(test)]
@@ -366,6 +429,34 @@ mod tests {
         let text = desktop_entry(&command, &environment);
         assert!(text.starts_with("[Desktop Entry]"));
         assert!(text.contains("KIRIE_WE_ASSETS=/tmp/assets exec /home/me/.local/bin/kirie"));
+    }
+
+    #[test]
+    fn a_shell_character_in_a_path_stays_a_character() {
+        let command = vec![
+            "/home/me/.local/bin/kirie".to_owned(),
+            "--bg=/w/$(id)`x`'q\"%".to_owned(),
+        ];
+        let text = desktop_entry(&command, &[]);
+        assert!(
+            text.contains(
+                r#"Exec=sh -c "exec /home/me/.local/bin/kirie '--bg=/w/\\$(id)\\`x\\`'\\\\''q\\"%%'"
+"#
+            ),
+            "{text}"
+        );
+        let text = unit(&command, &[("A".to_owned(), "50% $HOME".to_owned())]);
+        assert!(
+            text.contains(r#"ExecStart=/home/me/.local/bin/kirie "--bg=/w/$$(id)`x`'q\"%%""#),
+            "{text}"
+        );
+        assert!(text.contains(r#"Environment="A=50%% $HOME""#), "{text}");
+    }
+
+    #[test]
+    fn a_line_break_never_reaches_a_login_entry() {
+        let refused = enable(&["/bin/kirie\nExecStartPre=/bin/true".to_owned()], &[]);
+        assert!(refused.is_err(), "{refused:?}");
     }
 
     #[test]

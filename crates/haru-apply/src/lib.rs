@@ -69,11 +69,10 @@ pub trait Backend: Send + Sync {
 
 /// Hand a URL or a directory to whatever the desktop opens it with.
 ///
-/// The Windows arm used to be `cmd /C start "" <target>`. Rust only quotes an
-/// argument on Windows when it contains a space, so a URL went to `cmd`
-/// unquoted and `cmd` read the first `&` in it as a command separator: the
-/// Steam browser sign-in link, which ends `...&redir_ssl=1`, opened truncated
-/// and the sign-in did not work. `explorer` takes the target as one argument
+/// Windows uses `explorer` rather than `cmd /C start "" <target>`: Rust quotes
+/// an argument only when it contains a space, so `cmd` would read the first
+/// `&` of a URL as a command separator and cut the Steam sign-in link (which
+/// ends `...&redir_ssl=1`) short. `explorer` takes the target as one argument
 /// with no shell in between, and opens `https:`, `steam:` and plain
 /// directories all the same way.
 pub fn open_link(target: &str) {
@@ -114,20 +113,4 @@ pub fn for_this_platform(socket: Option<PathBuf>) -> Box<dyn Backend> {
     Box::new(Relaunch::new(
         socket.unwrap_or_else(crate::kirie::default_socket),
     ))
-}
-
-#[must_use]
-pub fn detect(socket: Option<PathBuf>) -> Option<Box<dyn Backend>> {
-    let kirie = Kirie::new(socket.clone());
-    if kirie.available() {
-        return Some(Box::new(kirie));
-    }
-    if cfg!(target_os = "linux") {
-        return None;
-    }
-    let socket = socket.unwrap_or_else(crate::kirie::default_socket);
-    let relaunch = Relaunch::new(socket);
-    relaunch
-        .available()
-        .then(|| Box::new(relaunch) as Box<dyn Backend>)
 }

@@ -48,18 +48,31 @@ impl Offscreen {
             command.env(key, value);
         }
 
-        let child = command
+        let mut child = command
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|error| format!("could not start the renderer ({error})"))?;
 
-        let finished = wait_for(child, DEADLINE)?;
+        // Read on its own thread while the renderer runs: a pipe nobody drains
+        // fills up, and the renderer then blocks on its next log line until
+        // the deadline kills it.
+        let said = child.stderr.take().map(|mut stderr| {
+            std::thread::spawn(move || {
+                let mut text = Vec::new();
+                let _ = std::io::Read::read_to_end(&mut stderr, &mut text);
+                text
+            })
+        });
+        wait_for(child, DEADLINE)?;
         if out.is_file() {
             return Ok(());
         }
+        let said = said
+            .and_then(|reading| reading.join().ok())
+            .unwrap_or_default();
 
-        let reason = String::from_utf8_lossy(&finished.stderr)
+        let reason = String::from_utf8_lossy(&said)
             .lines()
             .rev()
             .find(|line| !line.trim().is_empty())
@@ -69,23 +82,17 @@ impl Offscreen {
     }
 }
 
-fn wait_for(
-    mut child: std::process::Child,
-    deadline: std::time::Duration,
-) -> Result<std::process::Output, String> {
+fn wait_for(mut child: std::process::Child, deadline: std::time::Duration) -> Result<(), String> {
     let started = std::time::Instant::now();
     loop {
         match child.try_wait() {
-            Ok(Some(_)) => {
-                return child
-                    .wait_with_output()
-                    .map_err(|error| format!("the renderer could not be read ({error})"));
-            }
+            Ok(Some(_)) => return Ok(()),
             Ok(None) if started.elapsed() < deadline => {
                 std::thread::sleep(std::time::Duration::from_millis(30));
             }
             Ok(None) => {
                 let _ = child.kill();
+                let _ = child.wait();
                 return Err("the renderer took too long".to_owned());
             }
             Err(error) => return Err(format!("the renderer could not be waited on ({error})")),
@@ -105,10 +112,9 @@ fn strip_log_prefix(line: &str) -> String {
 
 /// The renderer to take a screenshot with, when the caller named none.
 ///
-/// This used to walk `~/.local/bin` and `/usr/bin` itself, which found nothing
-/// on Windows. `install::installed` already knows every place the renderer can
-/// be on this platform, `KIRIE_BINARY` and `PATH` included, so ask it; the bare
-/// name is the last resort, and leaves `available()` false.
+/// `install::installed` knows every place the renderer can be on this
+/// platform, `KIRIE_BINARY` and `PATH` included; the bare name is the last
+/// resort, and leaves `available()` false.
 fn find_kirie() -> PathBuf {
     crate::install::installed().unwrap_or_else(|| PathBuf::from(crate::install::RENDERER))
 }

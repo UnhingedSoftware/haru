@@ -103,6 +103,14 @@ impl Workshop {
             return;
         };
         while let Ok(answer) = self.inbound.try_recv() {
+            // Only the newest progress of a request matters; keeping every one
+            // let a long download push its own final answer, or another
+            // request's, out of the bounded buffer below.
+            if matches!(answer.1, Reply::Progress { .. }) {
+                waiting.retain(|(id, held)| {
+                    *id != answer.0 || !matches!(held, Reply::Progress { .. })
+                });
+            }
             waiting.push(answer);
         }
         if waiting.len() > KEEP {
@@ -420,6 +428,36 @@ mod tests {
         assert!(matches!(
             workshop.take(RequestId(1)),
             Some(Reply::Unsubscribed)
+        ));
+    }
+
+    #[test]
+    fn progress_is_kept_once_per_request() {
+        let (replies, inbound) = channel();
+        let workshop = Workshop {
+            outbound: channel().0,
+            inbound,
+            next: std::cell::Cell::new(1),
+            waiting: std::cell::RefCell::new(vec![(RequestId(1), Reply::Subscribed)]),
+        };
+        for done in 0..500 {
+            let _ = replies.send((
+                RequestId(2),
+                Reply::Progress {
+                    id: 9,
+                    done,
+                    total: 500,
+                },
+            ));
+        }
+        workshop.drain();
+        assert!(matches!(
+            workshop.take(RequestId(1)),
+            Some(Reply::Subscribed)
+        ));
+        assert!(matches!(
+            workshop.take(RequestId(2)),
+            Some(Reply::Progress { done: 499, .. })
         ));
     }
 

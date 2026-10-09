@@ -20,7 +20,10 @@ pub fn pid() -> Option<u32> {
         .flatten()
         .find_map(|entry| {
             let exe = std::fs::read_link(entry.path().join("exe")).ok()?;
-            if exe.file_name()? != "kirie" {
+            // A renderer that has since been updated in place runs from an
+            // unlinked file, which the kernel names `kirie (deleted)`.
+            let name = exe.file_name()?;
+            if name != "kirie" && name != "kirie (deleted)" {
                 return None;
             }
             entry.file_name().to_str()?.parse().ok()
@@ -154,10 +157,8 @@ pub fn arguments_for(socket: &Path, plan: &[Plan]) -> Vec<String> {
     let mut arguments = vec![format!("--control-socket={}", socket.display())];
     arguments.extend(haru_core::Config::load().renderer.arguments());
     for screen in plan {
-        // Sent on every platform. It used to be Linux-only, so on Windows and
-        // macOS the name was dropped and one `--bg` covered every monitor at
-        // once: assigning a wallpaper to the second screen quietly changed
-        // both, and the other screen's wallpaper was never passed at all.
+        // Named on every platform: without it one `--bg` covers every monitor
+        // at once, and the other screens' wallpapers are never passed.
         if is_a_real_screen(&screen.screen) {
             arguments.push(format!("--screen-root={}", screen.screen));
         }
@@ -247,8 +248,7 @@ pub fn stop() -> Result<(), String> {
     // posting WM_CLOSE to the target's top-level windows, and the renderer has
     // none: its only window is a WS_CHILD parented into Explorer's desktop, so
     // taskkill finds nothing to ask and exits non-zero with "this process can
-    // only be terminated forcefully". That turned every Stop -- and so every
-    // Restart, which stops first -- into "the renderer refused to stop".
+    // only be terminated forcefully".
     //
     // Nothing is lost by going straight to `/F`: the renderer removes a socket
     // file left at its path before it binds, so a hard kill self-heals, and it

@@ -42,6 +42,7 @@ image = { version = "0.25", default-features = false, features = [
     "gif",
     "jpeg",
     "png",
+    "webp",
 ] }
 qrcode = { version = "0.14", default-features = false }
 rfd = { version = "0.15", default-features = false }

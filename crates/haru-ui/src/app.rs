@@ -72,23 +72,7 @@ pub struct Haru {
     mark: Option<egui::TextureHandle>,
 }
 
-impl Default for Haru {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Haru {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::opening_on(Tab::Library, None)
-    }
-
-    #[must_use]
-    pub fn opening_on(tab: Tab, search: Option<String>) -> Self {
-        Self::opening_on_item(tab, search, None)
-    }
-
     #[must_use]
     pub fn opening_on_item(tab: Tab, search: Option<String>, item: Option<String>) -> Self {
         let config = Config::load();
@@ -114,7 +98,7 @@ impl Haru {
 
         let mut preview = Preview::new();
         if let Some(wanted) = item {
-            if let Some(found) = haru_core::library::scan(&config.libraries())
+            if let Some(found) = haru_core::library::scan_all(&config.libraries())
                 .into_iter()
                 .find(|installed| installed.id == wanted)
             {
@@ -449,7 +433,9 @@ impl Haru {
     }
 
     fn remember_web(&mut self) {
-        if self.config.renderer_web.is_some() || haru_apply::install::installed().is_none() {
+        // The engine's snapshot rather than `install::installed()`, which
+        // stats every directory on PATH and would do so on every frame.
+        if self.config.renderer_web.is_some() || self.engine.snapshot().binary.is_none() {
             return;
         }
         self.config.renderer_web = Some(haru_apply::install::Web::suggested().key().to_owned());
@@ -589,10 +575,6 @@ impl Haru {
     }
 
     /// What the login entry should put up, one line per screen.
-    ///
-    /// This used to keep only the first screen on Windows and macOS, so a
-    /// second monitor came back bare at every login even though the renderer
-    /// there takes a screen name like any other.
     fn current_plan(&self) -> Vec<haru_apply::launch::Plan> {
         let seen = self.engine.snapshot();
         seen.screens
@@ -612,8 +594,7 @@ impl Haru {
     ///
     /// Starting the renderer replaces everything it was showing, so the plan
     /// has to carry the screens that are not changing as well as the one that
-    /// is. Windows and macOS used to send only the changed screen, which left
-    /// the others with nothing on them.
+    /// is.
     fn plan_for(&self, screen: &str, dir: &std::path::Path) -> Vec<haru_apply::launch::Plan> {
         let mut names: Vec<String> = Vec::new();
         let mut showing: Vec<(String, std::path::PathBuf)> = Vec::new();

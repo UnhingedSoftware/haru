@@ -47,6 +47,15 @@ it, editable live. Nothing on your screens moves.
 
 ## Requirements
 
+**Your own pictures and videos** need nothing at all: no Steam account, no
+Wallpaper Engine. In the Library, press **Add a picture or video** (or drop
+files on the window) and it goes up on the chosen screen. **Add a folder**
+(or dropping a folder) adds every picture and video in it and the folders
+inside it, up to 1000 files. haru keeps its own
+copy, so moving or deleting the original does not break the wallpaper, and
+removing it from the Library leaves the original alone. Pictures: PNG, JPEG,
+WebP, BMP, GIF. Videos: MP4, WebM, MKV, MOV, M4V, AVI.
+
 **Browsing** the Workshop needs nothing at all — no account, no sign-in.
 
 **Installing wallpapers** and **drawing scenes** need a Steam account that owns

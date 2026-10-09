@@ -1,8 +1,9 @@
 use std::path::PathBuf;
+use std::sync::mpsc::{Receiver, channel};
 
 use egui::{Align, Layout, RichText, Rounding, Sense, Stroke, Vec2};
 use haru_apply::{Engine, Screen};
-use haru_core::{Config, Installed, human_size, library, overrides};
+use haru_core::{Config, Installed, human_size, library, overrides, own};
 use haru_media::Previews;
 use haru_workshop::{Reply, Request, Workshop};
 
@@ -57,6 +58,32 @@ pub struct Library {
     previewing: Option<Installed>,
     kind: Option<String>,
     broken: Vec<String>,
+    /// A rescan in flight. Scanning reads every item's project.json and adds
+    /// up the size of every file in it, which took the window's thread for as
+    /// long as that took each time the tab was opened.
+    scanning: Option<Receiver<Scanned>>,
+    /// A rescan asked for while one was running: it runs once that one
+    /// lands, since the first may have missed what prompted it.
+    rescan: Option<Vec<PathBuf>>,
+    /// Items removed while a scan was running, which that scan may still
+    /// have seen.
+    removed: Vec<PathBuf>,
+    /// The user's own pictures and videos being copied into the library, off
+    /// the window's thread since a video can be gigabytes.
+    adding: Option<Receiver<Added>>,
+    /// Files dropped while an add was running, added once it lands.
+    queued: Vec<PathBuf>,
+}
+
+/// What adding files produced: the folders made, and why any were refused.
+type Added = (Vec<PathBuf>, Vec<String>);
+
+type Scanned = (Vec<Installed>, Vec<String>);
+
+fn scan(roots: &[PathBuf]) -> Scanned {
+    let items = library::scan_all(roots);
+    let broken = library::unreadable(roots, &items);
+    (items, broken)
 }
 
 impl Library {
@@ -91,6 +118,11 @@ impl Library {
             previewing: None,
             kind: None,
             broken: Vec::new(),
+            scanning: None,
+            rescan: None,
+            removed: Vec::new(),
+            adding: None,
+            queued: Vec::new(),
             confirming: None,
             settings: crate::props::Panel::default(),
             workshop,
@@ -122,12 +154,143 @@ impl Library {
 
     pub fn refresh(&mut self, config: &Config, engine: &Engine) {
         let roots = config.libraries();
-        self.items = library::scan(&roots);
-        self.broken = library::unreadable(&roots);
-        self.sync(engine);
-        if self.selected.is_some_and(|index| index >= self.items.len()) {
-            self.selected = None;
+        if self.scanning.is_some() {
+            self.rescan = Some(roots);
+        } else {
+            self.start_scan(roots);
         }
+        self.sync(engine);
+    }
+
+    fn start_scan(&mut self, roots: Vec<PathBuf>) {
+        let (tell, heard) = channel();
+        let sent = roots.clone();
+        let started = std::thread::Builder::new()
+            .name("haru-library-scan".to_owned())
+            .spawn(move || {
+                let _ = tell.send(scan(&sent));
+            });
+        match started {
+            Ok(_) => self.scanning = Some(heard),
+            Err(_) => {
+                self.scanning = None;
+                self.take_scan(scan(&roots));
+            }
+        }
+    }
+
+    fn collect_scan(&mut self) {
+        let Some(scanning) = self.scanning.as_ref() else {
+            return;
+        };
+        match scanning.try_recv() {
+            Ok(scanned) => {
+                self.scanning = None;
+                self.take_scan(scanned);
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => self.scanning = None,
+        }
+        self.removed.clear();
+        if let Some(roots) = self.rescan.take() {
+            self.start_scan(roots);
+        }
+    }
+
+    fn take_scan(&mut self, (mut items, broken): Scanned) {
+        items.retain(|item| !self.removed.contains(&item.dir));
+        let selected = self
+            .selected
+            .and_then(|index| self.items.get(index))
+            .map(|item| item.dir.clone());
+        self.selected = selected.and_then(|dir| items.iter().position(|item| item.dir == dir));
+        self.items = items;
+        self.broken = broken;
+    }
+
+    /// Copies `files` into the library on a thread of its own. A folder adds
+    /// every picture and video found in it. A single file goes up on the
+    /// chosen screen once it lands; a batch only joins the library.
+    fn add_own(&mut self, files: Vec<PathBuf>) {
+        if files.is_empty() {
+            return;
+        }
+        if self.adding.is_some() {
+            self.queued.extend(files);
+            self.status = format!("adding\u{2026} ({} more waiting)", self.queued.len());
+            return;
+        }
+        let Some(home) = own::home() else {
+            self.status = "no data directory to keep your files in".to_owned();
+            return;
+        };
+        let (tell, heard) = channel();
+        let started = std::thread::Builder::new()
+            .name("haru-add-own".to_owned())
+            .spawn(move || {
+                let mut made = Vec::new();
+                let mut refused = Vec::new();
+                let mut wanted = Vec::new();
+                for path in files {
+                    if path.is_dir() {
+                        let found = own::media_in(&path);
+                        if found.is_empty() {
+                            refused.push(format!("no pictures or videos in {}", path.display()));
+                        }
+                        wanted.extend(found);
+                    } else {
+                        wanted.push(path);
+                    }
+                }
+                for file in &wanted {
+                    match own::add(file, &home) {
+                        Ok(dir) => made.push(dir),
+                        Err(why) => refused.push(why),
+                    }
+                }
+                let pictures: Vec<PathBuf> = made
+                    .iter()
+                    .filter(|dir| own::is_picture(dir))
+                    .cloned()
+                    .collect();
+                let _ = tell.send((made, refused));
+                // After telling the window, which needs nothing from it: a
+                // picture without a bake is still drawn, only baked when it
+                // first goes up.
+                haru_apply::install::prebake(&pictures);
+            });
+        match started {
+            Ok(_) => {
+                self.adding = Some(heard);
+                self.status = "adding\u{2026}".to_owned();
+            }
+            Err(error) => self.status = format!("could not start adding: {error}"),
+        }
+    }
+
+    fn collect_adding(&mut self, config: &Config, engine: &Engine) {
+        let Some(adding) = self.adding.as_ref() else {
+            return;
+        };
+        let (made, refused) = match adding.try_recv() {
+            Ok(added) => added,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                (Vec::new(), vec!["adding stopped unexpectedly".to_owned()])
+            }
+        };
+        self.adding = None;
+        self.refresh(config, engine);
+        if let [dir] = made.as_slice() {
+            self.apply_to_target(dir, engine);
+        }
+        if !refused.is_empty() {
+            self.status = refused.join("; ");
+        } else if made.len() > 1 {
+            self.status = format!("added {} wallpapers", made.len());
+        }
+        let queued = std::mem::take(&mut self.queued);
+        self.add_own(queued);
     }
 
     fn sync(&mut self, engine: &Engine) {
@@ -162,8 +325,21 @@ impl Library {
         sidebar: bool,
     ) {
         self.collect();
+        self.collect_scan();
+        self.collect_adding(config, engine);
         self.sync(engine);
-        if self.unsubscribing.is_some() {
+
+        let dropped: Vec<PathBuf> = ctx.input(|input| {
+            input
+                .raw
+                .dropped_files
+                .iter()
+                .filter_map(|file| file.path.clone())
+                .collect()
+        });
+        self.add_own(dropped);
+
+        if self.unsubscribing.is_some() || self.scanning.is_some() || self.adding.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
         }
 
@@ -242,6 +418,40 @@ impl Library {
             .size(11.0)
             .color(theme::MUTED),
         );
+        ui.add_space(8.0);
+        if ui
+            .add_enabled(
+                self.adding.is_none(),
+                egui::Button::new("Add a picture or video\u{2026}")
+                    .min_size(Vec2::new(200.0, 28.0)),
+            )
+            .on_hover_text(
+                "Use one of your own files as a wallpaper. No Steam account or \
+                 Wallpaper Engine needed. You can also drop files or folders on the window.",
+            )
+            .clicked()
+            && let Some(files) = pick_own()
+        {
+            self.add_own(files);
+        }
+        ui.add_space(4.0);
+        if ui
+            .add_enabled(
+                self.adding.is_none(),
+                egui::Button::new("Add a folder\u{2026}").min_size(Vec2::new(200.0, 28.0)),
+            )
+            .on_hover_text(format!(
+                "Adds every picture and video in a folder and the folders inside it \
+                 (up to {}).",
+                own::FOLDER_LIMIT
+            ))
+            .clicked()
+            && let Some(folder) = rfd::FileDialog::new()
+                .set_title("Add every picture and video in a folder")
+                .pick_folder()
+        {
+            self.add_own(vec![folder]);
+        }
         ui.add_space(10.0);
 
         ui.label(RichText::new("Filter").size(11.0).color(theme::MUTED));
@@ -290,8 +500,10 @@ impl Library {
         if shown.is_empty() {
             ui.centered_and_justified(|ui| {
                 ui.label(
-                    RichText::new(if self.items.is_empty() {
-                        "No wallpapers installed yet — find some in the Workshop tab."
+                    RichText::new(if self.items.is_empty() && self.scanning.is_some() {
+                        "Reading your library\u{2026}"
+                    } else if self.items.is_empty() {
+                        "No wallpapers yet. Add a picture or video of your own, or find some in the Workshop tab."
                     } else {
                         "Nothing matches that filter."
                     })
@@ -355,7 +567,7 @@ impl Library {
 
                                 ui.separator();
                                 if ui
-                                    .button(RichText::new("Unsubscribe").color(theme::DANGER))
+                                    .button(RichText::new(remove_label(item)).color(theme::DANGER))
                                     .clicked()
                                 {
                                     self.selected = Some(*index);
@@ -399,9 +611,10 @@ impl Library {
                         {
                             self.selected = None;
                         }
-                        if crate::icons::button(ui, crate::icons::Icon::External, false)
-                            .on_hover_text("Open the Workshop page")
-                            .clicked()
+                        if !own::is_own(&item.id)
+                            && crate::icons::button(ui, crate::icons::Icon::External, false)
+                                .on_hover_text("Open the Workshop page")
+                                .clicked()
                         {
                             open(std::path::Path::new(&format!(
                                 "https://steamcommunity.com/sharedfiles/filedetails/?id={}",
@@ -433,7 +646,15 @@ impl Library {
 
                 ui.add_space(8.0);
                 ui.label(format!("{} · {}", item.kind, human_size(item.size)));
-                ui.label(RichText::new(&item.id).small().color(theme::MUTED));
+                ui.label(
+                    RichText::new(if own::is_own(&item.id) {
+                        "Your own file"
+                    } else {
+                        item.id.as_str()
+                    })
+                    .small()
+                    .color(theme::MUTED),
+                );
 
                 ui.add_space(12.0);
 
@@ -448,16 +669,22 @@ impl Library {
 
                 if self.confirming.as_deref() == Some(item.id.as_str()) {
                     ui.label(
-                        RichText::new("Remove it and tell Steam you no longer want it?")
-                            .small()
-                            .color(theme::MUTED),
+                        RichText::new(if own::is_own(&item.id) {
+                            "Remove it from your library? The file you added it from is kept."
+                        } else {
+                            "Remove it and tell Steam you no longer want it?"
+                        })
+                        .small()
+                        .color(theme::MUTED),
                     );
                     ui.add_space(6.0);
                     if ui
                         .add_sized(
                             [ui.available_width(), 32.0],
-                            egui::Button::new(RichText::new("Unsubscribe").color(theme::TEXT))
-                                .fill(theme::DANGER.gamma_multiply(0.7)),
+                            egui::Button::new(
+                                RichText::new(remove_label(&item)).color(theme::TEXT),
+                            )
+                            .fill(theme::DANGER.gamma_multiply(0.7)),
                         )
                         .clicked()
                     {
@@ -473,10 +700,14 @@ impl Library {
                 } else if ui
                     .add_sized(
                         [ui.available_width(), 32.0],
-                        egui::Button::new(RichText::new("Unsubscribe").color(theme::DANGER))
+                        egui::Button::new(RichText::new(remove_label(&item)).color(theme::DANGER))
                             .stroke(egui::Stroke::new(1.0_f32, theme::DANGER)),
                     )
-                    .on_hover_text("Removes the files and the subscription")
+                    .on_hover_text(if own::is_own(&item.id) {
+                        "Removes haru's copy; your original file stays where it is"
+                    } else {
+                        "Removes the files and the subscription"
+                    })
                     .clicked()
                 {
                     self.confirming = Some(item.id.clone());
@@ -503,6 +734,9 @@ impl Library {
             Ok(()) => {
                 self.items.retain(|other| other.id != item.id);
                 self.selected = None;
+                if self.scanning.is_some() {
+                    self.removed.push(item.dir.clone());
+                }
                 format!("removed {}", item.title)
             }
             Err(error) => format!("could not remove the files: {error}"),
@@ -565,11 +799,18 @@ impl Library {
             return;
         }
 
+        // By the directory's own name when the item is not listed yet, as
+        // happens when it has just landed and the rescan is still running.
         let staged = self
             .items
             .iter()
             .find(|item| item.dir == dir)
-            .map(|item| overrides::read(&item.id).into_iter().collect())
+            .map(|item| item.id.clone())
+            .or_else(|| {
+                dir.file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            })
+            .map(|id| overrides::read(&id).into_iter().collect())
             .unwrap_or_default();
 
         engine.apply(screen, dir, staged);
@@ -622,6 +863,27 @@ impl Library {
         }
         shown
     }
+}
+
+/// What removing an item is called: an own file was never subscribed to.
+fn remove_label(item: &Installed) -> &'static str {
+    if own::is_own(&item.id) {
+        "Remove"
+    } else {
+        "Unsubscribe"
+    }
+}
+
+/// Asks for pictures and videos to add. `None` when the dialog was closed.
+fn pick_own() -> Option<Vec<PathBuf>> {
+    let mut both: Vec<&str> = own::PICTURES.to_vec();
+    both.extend(own::VIDEOS);
+    rfd::FileDialog::new()
+        .set_title("Add a picture or video")
+        .add_filter("Pictures and videos", &both)
+        .add_filter("Pictures", &own::PICTURES)
+        .add_filter("Videos", &own::VIDEOS)
+        .pick_files()
 }
 
 fn tile(
