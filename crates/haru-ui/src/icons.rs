@@ -53,7 +53,7 @@ pub fn button(ui: &mut Ui, icon: Icon, active: bool) -> Response {
 
     if response.hovered() {
         ui.painter()
-            .rect_filled(rect, egui::Rounding::same(7.0), theme::SURFACE_HOVER);
+            .rect_filled(rect, egui::CornerRadius::from(7.0), theme::SURFACE_HOVER);
     }
 
     let ink = if active { theme::ACCENT } else { theme::MUTED };

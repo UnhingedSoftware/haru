@@ -934,7 +934,7 @@ impl Browser {
                     ui.add(
                         egui::Image::new(&texture)
                             .max_width(ui.available_width())
-                            .rounding(10.0),
+                            .corner_radius(10.0),
                     );
                     ui.add_space(10.0);
                 }

@@ -1,4 +1,4 @@
-use egui::{Align, Color32, Layout, Rounding, Sense, Stroke, Vec2};
+use egui::{Align, Color32, CornerRadius, Layout, Sense, Stroke, Vec2};
 use haru_core::{human_size, plain_text};
 use haru_media::Previews;
 
@@ -81,7 +81,7 @@ pub fn show(
                     0.12,
                 );
                 let rect = slot.expand(lift * 4.0);
-                let rounding = Rounding::same(12.0);
+                let rounding = CornerRadius::from(12.0);
                 ui.painter().rect_filled(rect, rounding, theme::CARD);
 
                 let picture = ui.is_rect_visible(rect).then(|| {
@@ -94,7 +94,7 @@ pub fn show(
                 match picture.flatten() {
                     Some(texture) => {
                         egui::Image::new(&texture)
-                            .rounding(rounding)
+                            .corner_radius(rounding)
                             .uv(cover_uv(rect.size(), texture.size_vec2()))
                             .paint_at(ui, rect);
                     }
@@ -113,7 +113,8 @@ pub fn show(
                 } else {
                     Stroke::new(1.0_f32, theme::HAIRLINE.gamma_multiply(1.0 - lift))
                 };
-                ui.painter().rect_stroke(rect, rounding, edge);
+                ui.painter()
+                    .rect_stroke(rect, rounding, edge, egui::StrokeKind::Middle);
 
                 response
             },
@@ -182,7 +183,7 @@ fn one_line(
     ui.fonts(|fonts| fonts.layout_job(job))
 }
 
-pub fn shimmer(ui: &egui::Ui, rect: egui::Rect, rounding: Rounding) {
+pub fn shimmer(ui: &egui::Ui, rect: egui::Rect, rounding: CornerRadius) {
     use egui::epaint::{Mesh, Vertex};
 
     ui.painter().rect_filled(rect, rounding, theme::CARD);

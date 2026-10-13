@@ -72,11 +72,11 @@ impl Toasts {
                             Tone::Wrong => theme::DANGER,
                         };
 
-                        egui::Frame::none()
+                        egui::Frame::NONE
                             .fill(theme::MODAL.gamma_multiply(alpha))
-                            .rounding(egui::Rounding::same(10.0))
+                            .corner_radius(egui::CornerRadius::from(10.0))
                             .stroke(egui::Stroke::new(1.0_f32, edge.gamma_multiply(0.7 * alpha)))
-                            .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                            .inner_margin(egui::Margin::symmetric(14, 10))
                             .show(ui, |ui| {
                                 ui.set_max_width(360.0);
                                 ui.label(

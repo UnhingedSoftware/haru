@@ -1,4 +1,4 @@
-use egui::{Color32, Rounding, Stroke, Vec2};
+use egui::{Color32, CornerRadius, Stroke, Vec2};
 
 pub const ACCENT: Color32 = Color32::from_rgb(0x8B, 0x5C, 0xF6);
 
@@ -48,7 +48,7 @@ fn load_fonts(ctx: &egui::Context) {
 
     fonts.font_data.insert(
         ICONS.to_owned(),
-        egui::FontData::from_static(include_bytes!("../assets/remixicon.ttf")),
+        egui::FontData::from_static(include_bytes!("../assets/remixicon.ttf")).into(),
     );
     fonts
         .families
@@ -57,7 +57,9 @@ fn load_fonts(ctx: &egui::Context) {
     if let Some(bytes) = CJK_FONTS.iter().find_map(|path| std::fs::read(path).ok()) {
         fonts.font_data.insert(
             "cjk".to_owned(),
-            egui::FontData::from_owned(bytes).tweak(egui::FontTweak::default()),
+            egui::FontData::from_owned(bytes)
+                .tweak(egui::FontTweak::default())
+                .into(),
         );
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
             fonts
@@ -91,43 +93,43 @@ pub fn apply(ctx: &egui::Context) {
     visuals.extreme_bg_color = SURFACE;
     visuals.faint_bg_color = Color32::from_rgba_premultiplied(255, 255, 255, 8);
     visuals.override_text_color = Some(TEXT);
-    visuals.window_rounding = Rounding::same(14.0);
-    visuals.menu_rounding = Rounding::same(10.0);
+    visuals.window_corner_radius = CornerRadius::from(14.0);
+    visuals.menu_corner_radius = CornerRadius::from(10.0);
     visuals.window_stroke = Stroke::new(1.0_f32, HAIRLINE);
     visuals.selection.bg_fill = ACCENT.gamma_multiply(0.45);
     visuals.selection.stroke = Stroke::new(1.0_f32, ACCENT);
 
-    let rounding = Rounding::same(8.0);
-    visuals.widgets.noninteractive.rounding = rounding;
+    let rounding = CornerRadius::from(8.0);
+    visuals.widgets.noninteractive.corner_radius = rounding;
     visuals.widgets.noninteractive.bg_fill = SURFACE;
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, HAIRLINE);
     visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, MUTED);
 
-    visuals.widgets.inactive.rounding = rounding;
+    visuals.widgets.inactive.corner_radius = rounding;
     visuals.widgets.inactive.bg_fill = SURFACE;
     visuals.widgets.inactive.weak_bg_fill = SURFACE;
     visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, HAIRLINE);
     visuals.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, TEXT);
 
-    visuals.widgets.hovered.rounding = rounding;
+    visuals.widgets.hovered.corner_radius = rounding;
     visuals.widgets.hovered.bg_fill = SURFACE_HOVER;
     visuals.widgets.hovered.weak_bg_fill = SURFACE_HOVER;
     visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, ACCENT.gamma_multiply(0.6));
     visuals.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, TEXT);
 
-    visuals.widgets.active.rounding = rounding;
+    visuals.widgets.active.corner_radius = rounding;
     visuals.widgets.active.bg_fill = ACCENT.gamma_multiply(0.35);
     visuals.widgets.active.weak_bg_fill = ACCENT.gamma_multiply(0.35);
     visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, ACCENT);
 
-    visuals.widgets.open.rounding = rounding;
+    visuals.widgets.open.corner_radius = rounding;
     visuals.widgets.open.bg_fill = SURFACE_HOVER;
     visuals.widgets.open.bg_stroke = Stroke::new(1.0_f32, ACCENT.gamma_multiply(0.6));
 
     visuals.popup_shadow = egui::epaint::Shadow {
-        offset: Vec2::new(0.0, 6.0),
-        blur: 24.0,
-        spread: 0.0,
+        offset: [0, 6],
+        blur: 24,
+        spread: 0,
         color: Color32::from_black_alpha(140),
     };
     visuals.window_shadow = visuals.popup_shadow;
@@ -136,8 +138,8 @@ pub fn apply(ctx: &egui::Context) {
     style.spacing.interact_size = Vec2::new(40.0, 26.0);
     style.spacing.text_edit_width = 200.0;
     style.spacing.button_padding = Vec2::new(13.0, 7.0);
-    style.spacing.menu_margin = egui::Margin::same(6.0);
-    style.spacing.window_margin = egui::Margin::same(10.0);
+    style.spacing.menu_margin = egui::Margin::same(6);
+    style.spacing.window_margin = egui::Margin::same(10);
     style.spacing.scroll.bar_width = 8.0;
     style.spacing.combo_height = 360.0;
 
@@ -148,9 +150,9 @@ pub fn apply(ctx: &egui::Context) {
 }
 
 pub fn card(rounding: f32) -> egui::Frame {
-    egui::Frame::none()
+    egui::Frame::NONE
         .fill(CARD)
-        .rounding(Rounding::same(rounding))
+        .corner_radius(CornerRadius::from(rounding))
         .stroke(Stroke::new(1.0_f32, HAIRLINE))
 }
 
@@ -173,10 +175,10 @@ pub fn gradient(ui: &egui::Ui, rect: egui::Rect, rounding: f32, from: Color32, t
     mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
 
     ui.painter()
-        .rect_filled(rect, Rounding::same(rounding), from);
+        .rect_filled(rect, CornerRadius::from(rounding), from);
     ui.painter().add(egui::Shape::mesh(mesh));
     ui.painter()
-        .rect_filled(rect, Rounding::same(rounding), Color32::TRANSPARENT);
+        .rect_filled(rect, CornerRadius::from(rounding), Color32::TRANSPARENT);
 }
 
 pub fn glow(ui: &egui::Ui, rect: egui::Rect, rounding: f32, colour: Color32, strength: f32) {
@@ -185,8 +187,9 @@ pub fn glow(ui: &egui::Ui, rect: egui::Rect, rounding: f32, colour: Color32, str
         let fade = (strength * (0.30 / step as f32)).clamp(0.0, 1.0);
         ui.painter().rect_stroke(
             rect.expand(spread),
-            Rounding::same(rounding + spread),
+            CornerRadius::from(rounding + spread),
             Stroke::new(1.5_f32, colour.gamma_multiply(fade)),
+            egui::StrokeKind::Middle,
         );
     }
 }
@@ -205,7 +208,7 @@ pub fn chip(ui: &mut egui::Ui, text: &str, on: bool) -> egui::Response {
     let hot = response.hovered() && !on;
     ui.painter().rect_filled(
         rect,
-        Rounding::same(999.0),
+        CornerRadius::from(999.0),
         if hot { fill.gamma_multiply(1.6) } else { fill },
     );
     ui.painter()
@@ -216,7 +219,7 @@ pub fn chip(ui: &mut egui::Ui, text: &str, on: bool) -> egui::Response {
 pub fn field<'a>(text: &'a mut String, hint: &str) -> egui::TextEdit<'a> {
     egui::TextEdit::singleline(text)
         .hint_text(hint)
-        .margin(egui::Margin::symmetric(10.0, 7.0))
+        .margin(egui::Margin::symmetric(10, 7))
         .desired_width(f32::INFINITY)
         .font(egui::FontId::proportional(13.0))
 }
@@ -241,7 +244,8 @@ pub fn dismiss_chip(ui: &mut egui::Ui, text: &str) -> egui::Response {
     } else {
         ACCENT_SOFT
     };
-    ui.painter().rect_filled(rect, Rounding::same(999.0), fill);
+    ui.painter()
+        .rect_filled(rect, CornerRadius::from(999.0), fill);
     let left = rect.left() + 10.0;
     let middle = rect.center().y;
     ui.painter().galley(
@@ -261,7 +265,7 @@ pub fn primary(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let button = egui::Button::new(egui::RichText::new(text).size(13.0).color(Color32::WHITE))
         .fill(ACCENT)
         .stroke(Stroke::NONE)
-        .rounding(Rounding::same(9.0))
+        .corner_radius(CornerRadius::from(9.0))
         .min_size(Vec2::new(ui.available_width(), 34.0));
     ui.add(button)
 }
@@ -271,12 +275,12 @@ pub fn heading(ui: &mut egui::Ui, text: &str) {
 }
 
 pub fn panel_frame(side: Side) -> egui::Frame {
-    egui::Frame::none()
+    egui::Frame::NONE
         .fill(match side {
             Side::Middle => BASE,
             Side::Left | Side::Right => PANEL,
         })
-        .inner_margin(egui::Margin::symmetric(16.0, 14.0))
+        .inner_margin(egui::Margin::symmetric(16, 14))
         .stroke(match side {
             Side::Left | Side::Right => Stroke::new(1.0_f32, HAIRLINE),
             Side::Middle => Stroke::NONE,

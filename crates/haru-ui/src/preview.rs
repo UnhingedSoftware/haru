@@ -254,7 +254,7 @@ impl Preview {
                         egui::Image::new(&texture)
                             .maintain_aspect_ratio(true)
                             .fit_to_fraction(egui::vec2(1.0, 1.0))
-                            .rounding(8.0),
+                            .corner_radius(8.0),
                     );
                 });
             }

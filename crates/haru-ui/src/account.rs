@@ -133,7 +133,7 @@ impl Account {
             .frame(
                 egui::Frame::window(&ctx.style())
                     .fill(theme::MODAL)
-                    .inner_margin(egui::Margin::same(18.0)),
+                    .inner_margin(egui::Margin::same(18)),
             )
             .show(ctx, |ui| {
                 ui.set_max_width(380.0);

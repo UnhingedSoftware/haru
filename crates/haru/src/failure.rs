@@ -114,7 +114,9 @@ mod tests {
     #[test]
     fn a_missing_graphics_driver_is_named_as_such() {
         let said = window_error(&eframe::Error::Wgpu(
-            eframe::egui_wgpu::WgpuError::NoSuitableAdapterFound,
+            eframe::egui_wgpu::WgpuError::NoSuitableAdapterFound(
+                "no compatible adapter".to_owned(),
+            ),
         ));
         assert!(said.contains("graphics driver"), "{said}");
         assert!(said.contains("no suitable adapter"), "{said}");

@@ -213,7 +213,7 @@ impl Haru {
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-            .frame(theme::card(14.0).inner_margin(egui::Margin::symmetric(20.0, 16.0)))
+            .frame(theme::card(14.0).inner_margin(egui::Margin::symmetric(20, 16)))
             .show(ctx, |ui| {
                 ui.set_min_width(260.0);
                 for (key, what) in [
@@ -810,7 +810,7 @@ impl Haru {
                 theme::CARD.gamma_multiply(lit)
             };
             ui.painter()
-                .rect_filled(rect, egui::Rounding::same(9.0), fill);
+                .rect_filled(rect, egui::CornerRadius::from(9.0), fill);
         }
         if chosen {
             theme::glow(ui, rect, 9.0, theme::ACCENT, 0.8);

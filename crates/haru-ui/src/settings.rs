@@ -224,7 +224,7 @@ impl Settings {
                             .show(ui, |ui| {
                                 ui.set_max_width(ui.available_width().min(760.0));
                                 theme::card(14.0)
-                                    .inner_margin(egui::Margin::symmetric(20.0, 18.0))
+                                    .inner_margin(egui::Margin::symmetric(20, 18))
                                     .show(ui, |ui| {
                                         match self.chosen {
                                             Category::Account => {

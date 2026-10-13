@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, channel};
 
-use egui::{Align, Layout, RichText, Rounding, Sense, Stroke, Vec2};
+use egui::{Align, CornerRadius, Layout, RichText, Sense, Stroke, Vec2};
 use haru_apply::{Engine, Screen};
 use haru_core::{Config, Installed, human_size, library, overrides, own};
 use haru_media::Previews;
@@ -694,7 +694,7 @@ impl Library {
                     ui.add(
                         egui::Image::new(&texture)
                             .max_width(ui.available_width())
-                            .rounding(8.0),
+                            .corner_radius(8.0),
                     );
                 }
 
@@ -972,7 +972,7 @@ fn tile(
                 ui.ctx()
                     .animate_bool_with_time(response.id, response.hovered() || selected, 0.12);
             let rect = slot.expand(lift * 4.0);
-            let rounding = Rounding::same(12.0);
+            let rounding = CornerRadius::from(12.0);
             ui.painter().rect_filled(rect, rounding, theme::CARD);
 
             let picture = ui.is_rect_visible(rect).then(|| {
@@ -984,7 +984,7 @@ fn tile(
             match picture.flatten() {
                 Some(texture) => {
                     egui::Image::new(&texture)
-                        .rounding(rounding)
+                        .corner_radius(rounding)
                         .uv(crate::tile::cover_uv(rect.size(), texture.size_vec2()))
                         .paint_at(ui, rect);
                 }
@@ -1012,7 +1012,8 @@ fn tile(
             } else {
                 Stroke::new(1.0_f32, theme::HAIRLINE.gamma_multiply(1.0 - lift))
             };
-            ui.painter().rect_stroke(rect, rounding, edge);
+            ui.painter()
+                .rect_stroke(rect, rounding, edge, egui::StrokeKind::Middle);
 
             response
         },
